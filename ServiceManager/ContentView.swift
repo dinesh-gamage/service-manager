@@ -249,8 +249,8 @@ class ServiceManager: ObservableObject {
            let decoded = try? JSONDecoder().decode([ServiceConfig].self, from: data) {
             services = decoded.map { ServiceRuntime(config: $0) }
         } else {
-            // Default services for first launch
-            loadDefaultServices()
+            // Start with empty service list
+            services = []
         }
     }
 
@@ -339,39 +339,6 @@ class ServiceManager: ObservableObject {
         }
     }
 
-    private func loadDefaultServices() {
-        let defaults = [
-            ServiceConfig(
-                name: "Iviva Web",
-                command: "/usr/local/share/dotnet/dotnet ivivaweb.dll",
-                workingDirectory: "/Users/dineshgamage/eutech/projects/iviva/v4/build",
-                port: 5000,
-                environment: ["IVIVA_CONFIG_PATH": "/Users/dineshgamage/eutech/projects/iviva/v4/config/iviva.config.yml"]
-            ),
-            ServiceConfig(
-                name: "Lucy Engine",
-                command: "/usr/local/share/dotnet/dotnet LucyEngine.dll",
-                workingDirectory: "/Users/dineshgamage/eutech/projects/iviva/v4/build",
-                port: 9090,
-                environment: ["IVIVA_CONFIG_PATH": "/Users/dineshgamage/eutech/projects/iviva/v4/config/iviva.config.yml"]
-            
-            ),
-            ServiceConfig(
-                name: "Hydra",
-                command: "/Users/dineshgamage/.nvm/versions/node/v18.20.5/bin/node app.js",
-                workingDirectory: "/Users/dineshgamage/eutech/projects/iviva/v4/NodeES6Eval/out",
-                port: 7000
-            ),
-            ServiceConfig(
-                name: "Widget Designer",
-                command: "/opt/homebrew/bin/python3 -m http.server 5501",
-                workingDirectory: "/Users/dineshgamage/eutech/projects/lucy/widget-designer",
-                port: 5501
-            )
-        ]
-        services = defaults.map { ServiceRuntime(config: $0) }
-        saveServices()
-    }
 }
 
 // MARK: - Main View
