@@ -1,0 +1,78 @@
+[
+  {
+    "id": "A1B2C3D4-E5F6-4A01-B123-456789ABCDEF",
+    "name": "Docker Desktop",
+    "command": "open -a Docker",
+    "workingDirectory": "/Users/dineshgamage",
+    "port": null,
+    "environment": {}
+  },
+  {
+    "id": "B2C3D4E5-F6A7-4B02-C234-56789ABCDEF0",
+    "name": "SQL Server",
+    "command": "docker start sqlserver",
+    "workingDirectory": "/Users/dineshgamage",
+    "port": 1433,
+    "environment": {}
+  },
+  {
+    "id": "C3D4E5F6-A7B8-4C03-D345-6789ABCDEF01",
+    "name": "Redis",
+    "command": "brew services start redis",
+    "workingDirectory": "/Users/dineshgamage",
+    "port": 6379,
+    "environment": {}
+  },
+  {
+    "id": "D4E5F6A7-B8C9-4D04-E456-789ABCDEF012",
+    "name": "MongoDB",
+    "command": "brew services start mongodb-community@5.0",
+    "workingDirectory": "/Users/dineshgamage",
+    "port": 27017,
+    "environment": {}
+  },
+  {
+    "id": "E5F6A7B8-C9D0-4E05-F567-89ABCDEF0123",
+    "name": "RabbitMQ",
+    "command": "brew services start rabbitmq",
+    "workingDirectory": "/Users/dineshgamage",
+    "port": 5672,
+    "environment": {}
+  },
+  {
+    "id": "E2BCAEE9-472C-4A02-BC86-F130F4BDD6D7",
+    "name": "Iviva Web",
+    "command": "/usr/local/share/dotnet/dotnet ivivaweb.dll",
+    "workingDirectory": "/Users/dineshgamage/eutech/projects/iviva/v4/build",
+    "port": 5000,
+    "environment": {
+      "IVIVA_CONFIG_PATH": "/Users/dineshgamage/eutech/projects/iviva/v4/config/iviva.config.yml"
+    }
+  },
+  {
+    "id": "CC0A8748-2AC4-4CBE-B812-70CD0A01319B",
+    "name": "Lucy Engine",
+    "command": "/usr/local/share/dotnet/dotnet LucyEngine.dll",
+    "workingDirectory": "/Users/dineshgamage/eutech/projects/iviva/v4/build",
+    "port": 9090,
+    "environment": {
+      "IVIVA_CONFIG_PATH": "/Users/dineshgamage/eutech/projects/iviva/v4/config/iviva.config.yml"
+    }
+  },
+  {
+    "id": "42B6CA25-703C-482C-99C2-3D068E89AA9A",
+    "name": "Hydra",
+    "command": "/Users/dineshgamage/.nvm/versions/node/v18.20.5/bin/node app.js",
+    "workingDirectory": "/Users/dineshgamage/eutech/projects/iviva/v4/NodeES6Eval/out",
+    "port": 7000,
+    "environment": {}
+  },
+  {
+    "id": "9DEA263E-2260-4082-AEE6-C2C199DD1E30",
+    "name": "Widget Designer",
+    "command": "/opt/homebrew/bin/python3 -m http.server 5501",
+    "workingDirectory": "/Users/dineshgamage/eutech/projects/lucy/widget-designer",
+    "port": 5501,
+    "environment": {}
+  }
+]
