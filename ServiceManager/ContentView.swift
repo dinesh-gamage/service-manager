@@ -39,8 +39,9 @@ struct ServiceConfig: Codable, Identifiable {
     var checkCommand: String?
     var stopCommand: String?
     var restartCommand: String?
+    var maxLogLines: Int?
 
-    init(id: UUID = UUID(), name: String, command: String, workingDirectory: String, port: Int? = nil, environment: [String: String] = [:], prerequisites: [PrerequisiteCommand]? = nil, checkCommand: String? = nil, stopCommand: String? = nil, restartCommand: String? = nil) {
+    init(id: UUID = UUID(), name: String, command: String, workingDirectory: String, port: Int? = nil, environment: [String: String] = [:], prerequisites: [PrerequisiteCommand]? = nil, checkCommand: String? = nil, stopCommand: String? = nil, restartCommand: String? = nil, maxLogLines: Int? = 1000) {
         self.id = id
         self.name = name
         self.command = command
@@ -51,6 +52,7 @@ struct ServiceConfig: Codable, Identifiable {
         self.checkCommand = checkCommand
         self.stopCommand = stopCommand
         self.restartCommand = restartCommand
+        self.maxLogLines = maxLogLines
     }
 }
 
@@ -306,6 +308,15 @@ class ServiceRuntime: ObservableObject, Identifiable, Hashable {
                         let lines = output.components(separatedBy: .newlines)
                         for line in lines where !line.isEmpty {
                             self.parseLine(line)
+                        }
+                        // Amortized trim: only split/join when well over the limit
+                        if let max = self.config.maxLogLines {
+                            let threshold = max + 200
+                            let approxCount = self.logs.lazy.filter { $0 == "\n" }.count
+                            if approxCount > threshold {
+                                let allLines = self.logs.components(separatedBy: "\n")
+                                self.logs = allLines.suffix(max).joined(separator: "\n")
+                            }
                         }
                     }
                 }
@@ -1368,6 +1379,7 @@ struct ServiceFormContent: View {
     @Binding var checkCommand: String
     @Binding var stopCommand: String
     @Binding var restartCommand: String
+    @Binding var maxLogLines: String
 
     var body: some View {
         ScrollView {
@@ -1472,6 +1484,11 @@ struct ServiceFormContent: View {
                         TextField("myservice restart", text: $restartCommand)
                             .textFieldStyle(.roundedBorder)
                     }
+                    FormField(label: "Max Log Lines", hint: "Default 1000. Leave empty for unlimited.") {
+                        TextField("1000", text: $maxLogLines)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(maxWidth: 100)
+                    }
                 }
             }
             .padding(20)
@@ -1532,13 +1549,15 @@ struct AddServiceView: View {
     @State private var checkCommand = ""
     @State private var stopCommand = ""
     @State private var restartCommand = ""
+    @State private var maxLogLines = "1000"
 
     var body: some View {
         NavigationStack {
             ServiceFormContent(
                 name: $name, command: $command, workingDirectory: $workingDirectory,
                 port: $port, envVars: $envVars, prerequisites: $prerequisites,
-                checkCommand: $checkCommand, stopCommand: $stopCommand, restartCommand: $restartCommand
+                checkCommand: $checkCommand, stopCommand: $stopCommand, restartCommand: $restartCommand,
+                maxLogLines: $maxLogLines
             )
             .navigationTitle("Add Service")
             .toolbar {
@@ -1565,7 +1584,8 @@ struct AddServiceView: View {
             prerequisites: validPrereqs.isEmpty ? nil : validPrereqs,
             checkCommand: checkCommand.isEmpty ? nil : checkCommand,
             stopCommand: stopCommand.isEmpty ? nil : stopCommand,
-            restartCommand: restartCommand.isEmpty ? nil : restartCommand
+            restartCommand: restartCommand.isEmpty ? nil : restartCommand,
+            maxLogLines: maxLogLines.isEmpty ? nil : Int(maxLogLines)
         )
         manager.addService(config)
         dismiss()
@@ -1588,13 +1608,15 @@ struct EditServiceView: View {
     @State private var checkCommand = ""
     @State private var stopCommand = ""
     @State private var restartCommand = ""
+    @State private var maxLogLines = "1000"
 
     var body: some View {
         NavigationStack {
             ServiceFormContent(
                 name: $name, command: $command, workingDirectory: $workingDirectory,
                 port: $port, envVars: $envVars, prerequisites: $prerequisites,
-                checkCommand: $checkCommand, stopCommand: $stopCommand, restartCommand: $restartCommand
+                checkCommand: $checkCommand, stopCommand: $stopCommand, restartCommand: $restartCommand,
+                maxLogLines: $maxLogLines
             )
             .navigationTitle("Edit Service")
             .toolbar {
@@ -1618,6 +1640,7 @@ struct EditServiceView: View {
             checkCommand = service.config.checkCommand ?? ""
             stopCommand = service.config.stopCommand ?? ""
             restartCommand = service.config.restartCommand ?? ""
+            maxLogLines = service.config.maxLogLines.map { "\($0)" } ?? ""
         }
     }
 
@@ -1633,7 +1656,8 @@ struct EditServiceView: View {
             prerequisites: validPrereqs.isEmpty ? nil : validPrereqs,
             checkCommand: checkCommand.isEmpty ? nil : checkCommand,
             stopCommand: stopCommand.isEmpty ? nil : stopCommand,
-            restartCommand: restartCommand.isEmpty ? nil : restartCommand
+            restartCommand: restartCommand.isEmpty ? nil : restartCommand,
+            maxLogLines: maxLogLines.isEmpty ? nil : Int(maxLogLines)
         )
         manager.updateService(service, with: config)
         dismiss()
