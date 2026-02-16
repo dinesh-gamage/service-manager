@@ -12,6 +12,21 @@ import UniformTypeIdentifiers
 
 // MARK: - Service Model
 
+// Prerequisite command to run before service starts
+struct PrerequisiteCommand: Codable, Identifiable {
+    let id: UUID
+    var command: String
+    var delay: Int
+    var isRequired: Bool
+
+    init(id: UUID = UUID(), command: String, delay: Int = 0, isRequired: Bool = false) {
+        self.id = id
+        self.command = command
+        self.delay = delay
+        self.isRequired = isRequired
+    }
+}
+
 // Represents one service from config
 struct ServiceConfig: Codable, Identifiable {
     let id: UUID
@@ -20,14 +35,22 @@ struct ServiceConfig: Codable, Identifiable {
     var workingDirectory: String
     var port: Int?
     var environment: [String: String]
+    var prerequisites: [PrerequisiteCommand]?
+    var checkCommand: String?
+    var stopCommand: String?
+    var restartCommand: String?
 
-    init(id: UUID = UUID(), name: String, command: String, workingDirectory: String, port: Int? = nil, environment: [String: String] = [:]) {
+    init(id: UUID = UUID(), name: String, command: String, workingDirectory: String, port: Int? = nil, environment: [String: String] = [:], prerequisites: [PrerequisiteCommand]? = nil, checkCommand: String? = nil, stopCommand: String? = nil, restartCommand: String? = nil) {
         self.id = id
         self.name = name
         self.command = command
         self.workingDirectory = workingDirectory
         self.port = port
         self.environment = environment
+        self.prerequisites = prerequisites
+        self.checkCommand = checkCommand
+        self.stopCommand = stopCommand
+        self.restartCommand = restartCommand
     }
 }
 
@@ -49,12 +72,14 @@ struct LogEntry: Identifiable {
 
 // MARK: - Service Runtime State
 
+@MainActor
 class ServiceRuntime: ObservableObject, Identifiable, Hashable {
 
     let config: ServiceConfig
 
     @Published var logs: String = ""
     @Published var isRunning: Bool = false
+    @Published var isExternallyManaged: Bool = false
     @Published var hasPortConflict: Bool = false
     @Published var conflictingPID: Int? = nil
     @Published var errors: [LogEntry] = []
@@ -165,15 +190,6 @@ class ServiceRuntime: ObservableObject, Identifiable, Hashable {
     func start() {
         if isRunning { return }
 
-        // Check port before starting
-        if let port = config.port {
-            checkPort(port)
-            if hasPortConflict {
-                logs = "Port \(port) is already in use by process \(conflictingPID ?? 0). Click 'Kill & Restart' to stop it.\n"
-                return
-            }
-        }
-
         logs = ""
         errors = []
         warnings = []
@@ -181,35 +197,112 @@ class ServiceRuntime: ObservableObject, Identifiable, Hashable {
         collectingStackTrace = false
         currentStackTrace = []
 
-        let process = Process()
-        let pipe = Pipe()
-        
-        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        process.arguments = ["-c", config.command]
-        process.currentDirectoryURL = URL(fileURLWithPath: config.workingDirectory)
+        let config = self.config
 
-        // Set environment with custom vars
-        var env = ProcessInfo.processInfo.environment
-        for (key, value) in config.environment {
-            env[key] = value
-        }
-        process.environment = env
-        
-        process.standardOutput = pipe
-        process.standardError = pipe
-        
-        self.process = process
-        self.pipe = pipe
-        
-        // Live log streaming
-        pipe.fileHandleForReading.readabilityHandler = { handle in
-            let data = handle.availableData
-            if data.count > 0 {
-                if let output = String(data: data, encoding: .utf8) {
-                    DispatchQueue.main.async {
+        Task {
+            // Execute prerequisites off main
+            let prereqs = config.prerequisites ?? []
+            if !prereqs.isEmpty {
+                await MainActor.run { self.logs += "[Prerequisites] Running \(prereqs.count) prerequisite command(s)\n" }
+
+                for (index, prereq) in prereqs.enumerated() {
+                    await MainActor.run { self.logs += "[Prerequisites] [\(index + 1)/\(prereqs.count)] Running: \(prereq.command)\n" }
+
+                    let result = await Task.detached(priority: .userInitiated) { () -> (Int32, String) in
+                        let task = Process()
+                        task.executableURL = URL(fileURLWithPath: "/bin/zsh")
+                        task.arguments = ["-c", prereq.command]
+                        task.currentDirectoryURL = URL(fileURLWithPath: config.workingDirectory)
+                        let pipe = Pipe()
+                        task.standardOutput = pipe
+                        task.standardError = pipe
+                        do {
+                            try task.run()
+                            task.waitUntilExit()
+                            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                            let output = String(data: data, encoding: .utf8) ?? ""
+                            return (task.terminationStatus, output)
+                        } catch {
+                            return (-1, error.localizedDescription)
+                        }
+                    }.value
+
+                    let (exitCode, output) = result
+                    if !output.isEmpty { await MainActor.run { self.logs += output } }
+
+                    if exitCode != 0 {
+                        if prereq.isRequired {
+                            await MainActor.run {
+                                self.logs += "[Prerequisites] ❌ Required prerequisite failed with exit code \(exitCode)\n"
+                                self.logs += "[Prerequisites] Stopping service start due to required prerequisite failure\n"
+                            }
+                            return
+                        } else {
+                            await MainActor.run { self.logs += "[Prerequisites] ⚠️ Optional prerequisite failed with exit code \(exitCode), continuing...\n" }
+                        }
+                    } else {
+                        await MainActor.run { self.logs += "[Prerequisites] ✓ Command completed successfully\n" }
+                    }
+
+                    if prereq.delay > 0 {
+                        await MainActor.run { self.logs += "[Prerequisites] Waiting \(prereq.delay)s before continuing...\n" }
+                        try? await Task.sleep(nanoseconds: UInt64(prereq.delay) * 1_000_000_000)
+                    }
+                }
+            }
+
+            // Check port before starting
+            if let port = config.port {
+                let pid = await Task.detached(priority: .userInitiated) { () -> Int? in
+                    let task = Process()
+                    task.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
+                    task.arguments = ["-i", ":\(port)", "-t"]
+                    let pipe = Pipe()
+                    task.standardOutput = pipe
+                    try? task.run()
+                    task.waitUntilExit()
+                    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                    let trimmed = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    return trimmed.components(separatedBy: .newlines).first.flatMap { Int($0) }
+                }.value
+
+                await MainActor.run {
+                    self.hasPortConflict = pid != nil
+                    self.conflictingPID = pid
+                    if pid != nil {
+                        self.logs += "Port \(port) is already in use by process \(pid!). Click 'Kill & Restart' to stop it.\n"
+                    }
+                }
+                if pid != nil { return }
+            }
+
+            await MainActor.run { self.logs += "[Starting] \(config.name)\n" }
+
+            let process = Process()
+            let pipe = Pipe()
+
+            process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+            process.arguments = ["-c", config.command]
+            process.currentDirectoryURL = URL(fileURLWithPath: config.workingDirectory)
+
+            var env = ProcessInfo.processInfo.environment
+            for (key, value) in config.environment { env[key] = value }
+            process.environment = env
+
+            process.standardOutput = pipe
+            process.standardError = pipe
+
+            await MainActor.run {
+                self.process = process
+                self.pipe = pipe
+            }
+
+            // Live log streaming
+            pipe.fileHandleForReading.readabilityHandler = { handle in
+                let data = handle.availableData
+                if data.count > 0, let output = String(data: data, encoding: .utf8) {
+                    Task { @MainActor in
                         self.logs += output
-
-                        // Parse each line for errors/warnings
                         let lines = output.components(separatedBy: .newlines)
                         for line in lines where !line.isEmpty {
                             self.parseLine(line)
@@ -217,40 +310,42 @@ class ServiceRuntime: ObservableObject, Identifiable, Hashable {
                     }
                 }
             }
-        }
-        
-        // Termination handler
-        process.terminationHandler = { [weak self] proc in
-            DispatchQueue.main.async {
-                self?.isRunning = false
-                self?.logs += "\n[Process terminated with code \(proc.terminationStatus)]\n"
 
-                // Check for port conflict in logs
-                if let logs = self?.logs, logs.contains("EADDRINUSE") {
-                    self?.detectPortConflict()
+            // Termination handler
+            process.terminationHandler = { [weak self] proc in
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.logs += "\n[Process terminated with code \(proc.terminationStatus)]\n"
+                    if self.logs.contains("EADDRINUSE") {
+                        self.detectPortConflict()
+                    }
+                    // If a check command or port is configured, re-check true state
+                    // (handles fire-and-forget launchers like `open -a Docker`)
+                    if self.config.checkCommand != nil || self.config.port != nil {
+                        self.checkStatus()
+                    } else {
+                        self.process = nil
+                        self.isRunning = false
+                    }
                 }
             }
-        }
 
-        do {
-            try process.run()
-            isRunning = true
-        } catch {
-            logs += "Failed to start process: \(error.localizedDescription)\n"
-            if let nsError = error as NSError? {
-                logs += "Error domain: \(nsError.domain)\n"
-                logs += "Error code: \(nsError.code)\n"
-                logs += "Error details: \(nsError.userInfo)\n"
+            do {
+                try process.run()
+                await MainActor.run { self.isRunning = true }
+            } catch {
+                await MainActor.run {
+                    self.logs += "Failed to start process: \(error.localizedDescription)\n"
+                }
             }
         }
     }
 
-    // Check if port is in use
+    // Check if port is in use — must be called from main thread
     func checkPort(_ port: Int) {
         hasPortConflict = false
         conflictingPID = nil
 
-        // Find process using this port
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
         task.arguments = ["-i", ":\(port)", "-t"]
@@ -265,8 +360,6 @@ class ServiceRuntime: ObservableObject, Identifiable, Hashable {
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
             if let output = String(data: data, encoding: .utf8) {
                 let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
-
-                // Handle multiple PIDs - take the first one
                 if !trimmed.isEmpty {
                     let pids = trimmed.components(separatedBy: .newlines)
                     if let firstPID = pids.first, let pid = Int(firstPID) {
@@ -289,57 +382,213 @@ class ServiceRuntime: ObservableObject, Identifiable, Hashable {
         checkPort(port)
     }
 
+    // Check if service is running (via checkCommand or port fallback)
+    // Safe to call from any thread — blocking work runs in a detached task
+    func checkStatus() {
+        let config = self.config
+        let ownedProcess = self.process
+
+        if let checkCmd = config.checkCommand, !checkCmd.isEmpty {
+            Task.detached {
+                let task = Process()
+                task.executableURL = URL(fileURLWithPath: "/bin/zsh")
+                task.arguments = ["-c", checkCmd]
+                task.currentDirectoryURL = URL(fileURLWithPath: config.workingDirectory)
+                do {
+                    try task.run()
+                    task.waitUntilExit()
+                    let running = task.terminationStatus == 1
+                    await MainActor.run {
+                        if running && ownedProcess == nil {
+                            self.isExternallyManaged = true
+                            self.isRunning = true
+                        } else if !running {
+                            self.isExternallyManaged = false
+                            self.isRunning = ownedProcess?.isRunning ?? false
+                        }
+                        self.logs += "[Check] Service is \(running ? "running" : "not running")\(self.isExternallyManaged ? " (external)" : "")\n"
+                    }
+                } catch {
+                    await MainActor.run {
+                        self.logs += "[Check] Failed to run check command: \(error.localizedDescription)\n"
+                    }
+                }
+            }
+        } else if let port = config.port {
+            Task.detached {
+                let task = Process()
+                task.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
+                task.arguments = ["-i", ":\(port)", "-t"]
+                let pipe = Pipe()
+                task.standardOutput = pipe
+                do {
+                    try task.run()
+                    task.waitUntilExit()
+                    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                    let trimmed = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    let pid = trimmed.components(separatedBy: .newlines).first.flatMap { Int($0) }
+                    await MainActor.run {
+                        self.hasPortConflict = pid != nil
+                        self.conflictingPID = pid
+                        if pid != nil && ownedProcess == nil {
+                            self.isExternallyManaged = true
+                            self.isRunning = true
+                        }
+                        self.logs += "[Check] Port \(port) is \(pid != nil ? "in use by PID \(pid!)" : "free")\n"
+                    }
+                } catch {
+                    await MainActor.run {
+                        self.logs += "[Check] Failed to check port \(port): \(error.localizedDescription)\n"
+                    }
+                }
+            }
+        } else {
+            logs += "[Check] No check command or port configured\n"
+        }
+    }
+
     // Kill conflicting process and restart
     func killAndRestart() {
         guard let pid = conflictingPID else { return }
+        Task {
+            let success = await Task.detached(priority: .userInitiated) { () -> Bool in
+                let task = Process()
+                task.executableURL = URL(fileURLWithPath: "/bin/kill")
+                task.arguments = ["-9", "\(pid)"]
+                do { try task.run(); task.waitUntilExit(); return true }
+                catch { return false }
+            }.value
 
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/bin/kill")
-        task.arguments = ["-9", "\(pid)"]
-
-        do {
-            try task.run()
-            task.waitUntilExit()
-
-            // Reset conflict state
-            DispatchQueue.main.async {
-                self.hasPortConflict = false
-                self.conflictingPID = nil
-                self.logs += "\n[Killed process \(pid)]\n"
-
-                // Restart service
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    self.start()
-                }
+            if success {
+                hasPortConflict = false
+                conflictingPID = nil
+                logs += "\n[Killed process \(pid)]\n"
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                start()
+            } else {
+                logs += "Failed to kill process \(pid)\n"
             }
-        } catch {
-            logs += "Failed to kill process: \(error.localizedDescription)\n"
         }
     }
 
     // Stop the service
     func stop() {
-        guard let proc = process else { return }
+        let config = self.config
 
-        // Get PID and force kill
-        let pid = proc.processIdentifier
-
-        // Terminate the process
-        proc.terminate()
-
-        // Wait briefly for graceful shutdown
-        DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) {
-            // Force kill if still running
-            if proc.isRunning {
-                let killTask = Process()
-                killTask.executableURL = URL(fileURLWithPath: "/bin/kill")
-                killTask.arguments = ["-9", "\(pid)"]
-                try? killTask.run()
+        // Case 1: custom stop command
+        if let stopCmd = config.stopCommand, !stopCmd.isEmpty {
+            Task {
+                let output = await Task.detached(priority: .userInitiated) { () -> String in
+                    let task = Process()
+                    task.executableURL = URL(fileURLWithPath: "/bin/zsh")
+                    task.arguments = ["-c", stopCmd]
+                    task.currentDirectoryURL = URL(fileURLWithPath: config.workingDirectory)
+                    let pipe = Pipe()
+                    task.standardOutput = pipe
+                    task.standardError = pipe
+                    do {
+                        try task.run(); task.waitUntilExit()
+                        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                        return String(data: data, encoding: .utf8) ?? ""
+                    } catch { return "[Stop] Failed: \(error.localizedDescription)\n" }
+                }.value
+                if !output.isEmpty { logs += output }
+                process = nil
+                isRunning = false
+                isExternallyManaged = false
             }
+            return
         }
 
-        process = nil
-        isRunning = false
+        // Case 2: we own the process
+        if let proc = process {
+            let pid = proc.processIdentifier
+            proc.terminate()
+            process = nil
+            isRunning = false
+            isExternallyManaged = false
+            Task {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                let stillRunning = await Task.detached(priority: .userInitiated) { proc.isRunning }.value
+                if stillRunning {
+                    let killTask = Process()
+                    killTask.executableURL = URL(fileURLWithPath: "/bin/kill")
+                    killTask.arguments = ["-9", "\(pid)"]
+                    try? killTask.run()
+                }
+            }
+            return
+        }
+
+        // Case 3: externally managed — use port-based PID kill
+        if let port = config.port {
+            Task {
+                let pid = await Task.detached(priority: .userInitiated) { () -> Int? in
+                    let task = Process()
+                    task.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
+                    task.arguments = ["-i", ":\(port)", "-t"]
+                    let pipe = Pipe()
+                    task.standardOutput = pipe
+                    try? task.run(); task.waitUntilExit()
+                    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                    let trimmed = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    return trimmed.components(separatedBy: .newlines).first.flatMap { Int($0) }
+                }.value
+
+                if let pid {
+                    let killed = await Task.detached(priority: .userInitiated) { () -> Bool in
+                        let killTask = Process()
+                        killTask.executableURL = URL(fileURLWithPath: "/bin/kill")
+                        killTask.arguments = ["-9", "\(pid)"]
+                        do { try killTask.run(); killTask.waitUntilExit(); return true }
+                        catch { return false }
+                    }.value
+                    logs += killed ? "[Stop] Killed external process \(pid) on port \(port)\n"
+                                   : "[Stop] Failed to kill external process \(pid)\n"
+                } else {
+                    logs += "[Stop] No process found on port \(port)\n"
+                }
+                isRunning = false
+                isExternallyManaged = false
+                hasPortConflict = false
+                conflictingPID = nil
+            }
+            return
+        }
+
+        // Case 4: no way to stop
+        logs += "[Stop] Cannot stop: no stop command or port configured\n"
+    }
+
+    // Restart the service
+    func restart() {
+        let config = self.config
+        if let restartCmd = config.restartCommand, !restartCmd.isEmpty {
+            Task {
+                let output = await Task.detached(priority: .userInitiated) { () -> String in
+                    let task = Process()
+                    task.executableURL = URL(fileURLWithPath: "/bin/zsh")
+                    task.arguments = ["-c", restartCmd]
+                    task.currentDirectoryURL = URL(fileURLWithPath: config.workingDirectory)
+                    let pipe = Pipe()
+                    task.standardOutput = pipe
+                    task.standardError = pipe
+                    do {
+                        try task.run(); task.waitUntilExit()
+                        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                        return String(data: data, encoding: .utf8) ?? ""
+                    } catch { return "[Restart] Failed: \(error.localizedDescription)\n" }
+                }.value
+                if !output.isEmpty { logs += output }
+                logs += "[Restart] Command completed\n"
+            }
+        } else {
+            stop()
+            Task {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                start()
+            }
+        }
     }
 
     // Clear errors
@@ -402,9 +651,17 @@ class ServiceManager: ObservableObject {
         saveServices()
     }
 
+    func checkAllServices() {
+        for service in services {
+            service.checkStatus()
+        }
+    }
+
     func exportServices() {
         let configs = services.map { $0.config }
-        guard let jsonData = try? JSONEncoder().encode(configs),
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        guard let jsonData = try? encoder.encode(configs),
               let jsonString = String(data: jsonData, encoding: .utf8) else {
             return
         }
@@ -480,6 +737,7 @@ struct ContentView: View {
     @State private var showingAddService = false
     @State private var showingEditService = false
     @State private var showingDeleteAlert = false
+    @State private var showingJSONEditor = false
     @State private var serviceToDelete: ServiceRuntime?
     @State private var serviceToEditId: UUID?
 
@@ -493,6 +751,12 @@ struct ContentView: View {
                         .font(.headline)
                     Spacer()
 
+                    Button(action: { manager.checkAllServices() }) {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Check All Services")
+
                     Button(action: { manager.importServices() }) {
                         Image(systemName: "square.and.arrow.down")
                     }
@@ -504,6 +768,12 @@ struct ContentView: View {
                     }
                     .buttonStyle(.borderless)
                     .help("Export Services")
+
+                    Button(action: { showingJSONEditor = true }) {
+                        Image(systemName: "curlybraces")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Edit JSON")
 
                     Button(action: { showingAddService = true }) {
                         Image(systemName: "plus.circle")
@@ -555,6 +825,25 @@ struct ContentView: View {
             }
         }
         .id(serviceToEditId)
+        .sheet(isPresented: $showingJSONEditor, onDismiss: {
+            // Force refresh of selected service after JSON changes
+            if let currentId = selectedServiceId {
+                // Check if the selected service still exists
+                if manager.services.first(where: { $0.id == currentId }) != nil {
+                    // Force refresh by temporarily clearing and restoring
+                    let tempId = currentId
+                    selectedServiceId = nil
+                    DispatchQueue.main.async {
+                        selectedServiceId = tempId
+                    }
+                } else {
+                    // Selected service was deleted, select first available
+                    selectedServiceId = manager.services.first?.id
+                }
+            }
+        }) {
+            JSONEditorView(manager: manager)
+        }
         .alert("Delete Service", isPresented: $showingDeleteAlert, presenting: serviceToDelete) { service in
             Button("Cancel", role: .cancel) { }
             Button("Delete", role: .destructive) {
@@ -579,6 +868,7 @@ struct ContentView: View {
             if let first = manager.services.first {
                 selectedServiceId = first.id
             }
+            manager.checkAllServices()
         }
     }
 }
@@ -643,7 +933,36 @@ struct ServiceDetailView: View {
 
                 // Action buttons
                 HStack {
-                    if service.hasPortConflict {
+                    if service.isRunning {
+                        if service.isExternallyManaged {
+                            Text("Running outside ServiceManager")
+                                .font(.caption)
+                                .foregroundColor(.orange)
+                        }
+
+                        Button("Stop") {
+                            service.stop()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.red)
+
+                        Button("Restart") {
+                            service.restart()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.orange)
+
+                        if service.isExternallyManaged {
+                            Button("Kill & Start") {
+                                service.stop()
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                                    service.start()
+                                }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(.purple)
+                        }
+                    } else if service.hasPortConflict {
                         Text("Port \(service.config.port ?? 0) in use (PID: \(service.conflictingPID ?? 0))")
                             .font(.caption)
                             .foregroundColor(.orange)
@@ -653,18 +972,20 @@ struct ServiceDetailView: View {
                         }
                         .buttonStyle(.borderedProminent)
                         .tint(.red)
-                    } else if service.isRunning {
-                        Button("Stop") {
-                            service.stop()
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .tint(.red)
                     } else {
                         Button("Start") {
                             service.start()
                         }
                         .buttonStyle(.borderedProminent)
                     }
+
+                    Button {
+                        service.checkStatus()
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Check service status")
 
                     Spacer()
 
@@ -765,6 +1086,12 @@ struct ServiceDetailView: View {
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
+
+                    if let prereqs = service.config.prerequisites, !prereqs.isEmpty {
+                        Label("Prerequisites: \(prereqs.count) command(s)", systemImage: "list.bullet.clipboard")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
                 }
             }
             .padding()
@@ -804,6 +1131,9 @@ struct ServiceDetailView: View {
                     LogView(logs: service.logs)
                 }
             }
+        }
+        .onAppear {
+            service.checkStatus()
         }
     }
 }
@@ -1018,6 +1348,175 @@ struct LogView: View {
     }
 }
 
+// MARK: - Shared form model
+
+struct EnvVar: Identifiable {
+    let id = UUID()
+    var key: String
+    var value: String
+}
+
+// MARK: - Shared Service Form Content
+
+struct ServiceFormContent: View {
+    @Binding var name: String
+    @Binding var command: String
+    @Binding var workingDirectory: String
+    @Binding var port: String
+    @Binding var envVars: [EnvVar]
+    @Binding var prerequisites: [PrerequisiteCommand]
+    @Binding var checkCommand: String
+    @Binding var stopCommand: String
+    @Binding var restartCommand: String
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+
+                // Basic Info
+                FormSection(title: "Basic Info") {
+                    HStack(spacing: 12) {
+                        FormField(label: "Name") {
+                            TextField("My Service", text: $name)
+                                .textFieldStyle(.roundedBorder)
+                        }
+                        FormField(label: "Port", width: 100) {
+                            TextField("8080", text: $port)
+                                .textFieldStyle(.roundedBorder)
+                        }
+                    }
+                    FormField(label: "Command") {
+                        TextField("/usr/bin/myservice start", text: $command)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    FormField(label: "Working Directory") {
+                        TextField("/Users/me/project", text: $workingDirectory)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                }
+
+                // Environment Variables
+                FormSection(title: "Environment Variables") {
+                    ForEach($envVars) { $envVar in
+                        HStack(spacing: 8) {
+                            TextField("KEY", text: $envVar.key)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(maxWidth: 160)
+                            TextField("value", text: $envVar.value)
+                                .textFieldStyle(.roundedBorder)
+                            Button(action: { envVars.removeAll { $0.id == envVar.id } }) {
+                                Image(systemName: "minus.circle.fill")
+                                    .foregroundColor(.red)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    Button(action: { envVars.append(EnvVar(key: "", value: "")) }) {
+                        Label("Add Variable", systemImage: "plus.circle")
+                            .font(.callout)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundColor(.accentColor)
+                }
+
+                // Prerequisites
+                FormSection(title: "Prerequisites") {
+                    ForEach($prerequisites) { $prereq in
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack(spacing: 8) {
+                                TextField("Command", text: $prereq.command)
+                                    .textFieldStyle(.roundedBorder)
+                                Button(action: { prerequisites.removeAll { $0.id == prereq.id } }) {
+                                    Image(systemName: "minus.circle.fill")
+                                        .foregroundColor(.red)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                            HStack(spacing: 16) {
+                                HStack(spacing: 6) {
+                                    Text("Delay (s)")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                    TextField("0", value: $prereq.delay, format: .number)
+                                        .textFieldStyle(.roundedBorder)
+                                        .frame(width: 56)
+                                }
+                                Toggle("Required", isOn: $prereq.isRequired)
+                                    .toggleStyle(.checkbox)
+                                    .font(.callout)
+                            }
+                        }
+                        .padding(10)
+                        .background(Color.primary.opacity(0.04))
+                        .cornerRadius(8)
+                    }
+                    Button(action: { prerequisites.append(PrerequisiteCommand(command: "", delay: 0, isRequired: false)) }) {
+                        Label("Add Prerequisite", systemImage: "plus.circle")
+                            .font(.callout)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundColor(.accentColor)
+                }
+
+                // Advanced Commands
+                FormSection(title: "Advanced Commands") {
+                    FormField(label: "Check Command", hint: "Exit code: 1 = running, 0 = stopped") {
+                        TextField("pgrep -x myservice", text: $checkCommand)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    FormField(label: "Stop Command", hint: "Defaults to SIGTERM → SIGKILL or port-based kill") {
+                        TextField("myservice stop", text: $stopCommand)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    FormField(label: "Restart Command", hint: "Defaults to stop + start") {
+                        TextField("myservice restart", text: $restartCommand)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                }
+            }
+            .padding(20)
+        }
+    }
+}
+
+// MARK: - Form helpers
+
+struct FormSection<Content: View>: View {
+    let title: String
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title)
+                .font(.headline)
+            Divider()
+            content()
+        }
+    }
+}
+
+struct FormField<Content: View>: View {
+    let label: String
+    var hint: String? = nil
+    var width: CGFloat? = nil
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label)
+                .font(.callout)
+                .foregroundColor(.secondary)
+            content()
+            if let hint {
+                Text(hint)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
+        .frame(maxWidth: width ?? .infinity, alignment: .leading)
+    }
+}
+
 // MARK: - Add Service View
 
 struct AddServiceView: View {
@@ -1029,76 +1528,47 @@ struct AddServiceView: View {
     @State private var workingDirectory = ""
     @State private var port = ""
     @State private var envVars: [EnvVar] = []
-
-    struct EnvVar: Identifiable {
-        let id = UUID()
-        var key: String
-        var value: String
-    }
+    @State private var prerequisites: [PrerequisiteCommand] = []
+    @State private var checkCommand = ""
+    @State private var stopCommand = ""
+    @State private var restartCommand = ""
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section("Basic Info") {
-                    TextField("Service Name", text: $name)
-                    TextField("Command", text: $command)
-                    TextField("Working Directory", text: $workingDirectory)
-                    TextField("Port (optional)", text: $port)
-                }
-
-                Section("Environment Variables") {
-                    ForEach($envVars) { $envVar in
-                        HStack {
-                            TextField("Key", text: $envVar.key)
-                            TextField("Value", text: $envVar.value)
-                            Button(action: { removeEnvVar(envVar) }) {
-                                Image(systemName: "minus.circle.fill")
-                                    .foregroundColor(.red)
-                            }
-                        }
-                    }
-
-                    Button("Add Variable") {
-                        envVars.append(EnvVar(key: "", value: ""))
-                    }
-                }
-            }
+            ServiceFormContent(
+                name: $name, command: $command, workingDirectory: $workingDirectory,
+                port: $port, envVars: $envVars, prerequisites: $prerequisites,
+                checkCommand: $checkCommand, stopCommand: $stopCommand, restartCommand: $restartCommand
+            )
             .navigationTitle("Add Service")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
-                        dismiss()
-                    }
+                    Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Add") {
-                        addService()
-                    }
-                    .disabled(name.isEmpty || command.isEmpty || workingDirectory.isEmpty)
+                    Button("Add") { addService() }
+                        .disabled(name.isEmpty || command.isEmpty || workingDirectory.isEmpty)
                 }
             }
         }
-        .frame(minWidth: 500, minHeight: 400)
+        .frame(minWidth: 520, minHeight: 500)
     }
 
     func addService() {
         let portInt = Int(port)
         let envDict = Dictionary(uniqueKeysWithValues: envVars.filter { !$0.key.isEmpty }.map { ($0.key, $0.value) })
+        let validPrereqs = prerequisites.filter { !$0.command.isEmpty }
 
         let config = ServiceConfig(
-            name: name,
-            command: command,
-            workingDirectory: workingDirectory,
-            port: portInt,
-            environment: envDict
+            name: name, command: command, workingDirectory: workingDirectory,
+            port: portInt, environment: envDict,
+            prerequisites: validPrereqs.isEmpty ? nil : validPrereqs,
+            checkCommand: checkCommand.isEmpty ? nil : checkCommand,
+            stopCommand: stopCommand.isEmpty ? nil : stopCommand,
+            restartCommand: restartCommand.isEmpty ? nil : restartCommand
         )
-
         manager.addService(config)
         dismiss()
-    }
-
-    func removeEnvVar(_ envVar: EnvVar) {
-        envVars.removeAll { $0.id == envVar.id }
     }
 }
 
@@ -1114,41 +1584,143 @@ struct EditServiceView: View {
     @State private var workingDirectory = ""
     @State private var port = ""
     @State private var envVars: [EnvVar] = []
-
-    struct EnvVar: Identifiable {
-        let id = UUID()
-        var key: String
-        var value: String
-    }
+    @State private var prerequisites: [PrerequisiteCommand] = []
+    @State private var checkCommand = ""
+    @State private var stopCommand = ""
+    @State private var restartCommand = ""
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section("Basic Info") {
-                    TextField("Service Name", text: $name)
-                    TextField("Command", text: $command)
-                    TextField("Working Directory", text: $workingDirectory)
-                    TextField("Port (optional)", text: $port)
+            ServiceFormContent(
+                name: $name, command: $command, workingDirectory: $workingDirectory,
+                port: $port, envVars: $envVars, prerequisites: $prerequisites,
+                checkCommand: $checkCommand, stopCommand: $stopCommand, restartCommand: $restartCommand
+            )
+            .navigationTitle("Edit Service")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
                 }
-
-                Section("Environment Variables") {
-                    ForEach($envVars) { $envVar in
-                        HStack {
-                            TextField("Key", text: $envVar.key)
-                            TextField("Value", text: $envVar.value)
-                            Button(action: { removeEnvVar(envVar) }) {
-                                Image(systemName: "minus.circle.fill")
-                                    .foregroundColor(.red)
-                            }
-                        }
-                    }
-
-                    Button("Add Variable") {
-                        envVars.append(EnvVar(key: "", value: ""))
-                    }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") { updateService() }
+                        .disabled(name.isEmpty || command.isEmpty || workingDirectory.isEmpty)
                 }
             }
-            .navigationTitle("Edit Service")
+        }
+        .frame(minWidth: 520, minHeight: 500)
+        .onAppear {
+            name = service.config.name
+            command = service.config.command
+            workingDirectory = service.config.workingDirectory
+            port = service.config.port.map { "\($0)" } ?? ""
+            envVars = service.config.environment.map { EnvVar(key: $0.key, value: $0.value) }
+            prerequisites = service.config.prerequisites ?? []
+            checkCommand = service.config.checkCommand ?? ""
+            stopCommand = service.config.stopCommand ?? ""
+            restartCommand = service.config.restartCommand ?? ""
+        }
+    }
+
+    func updateService() {
+        let portInt = Int(port)
+        let envDict = Dictionary(uniqueKeysWithValues: envVars.filter { !$0.key.isEmpty }.map { ($0.key, $0.value) })
+        let validPrereqs = prerequisites.filter { !$0.command.isEmpty }
+
+        let config = ServiceConfig(
+            id: service.config.id,
+            name: name, command: command, workingDirectory: workingDirectory,
+            port: portInt, environment: envDict,
+            prerequisites: validPrereqs.isEmpty ? nil : validPrereqs,
+            checkCommand: checkCommand.isEmpty ? nil : checkCommand,
+            stopCommand: stopCommand.isEmpty ? nil : stopCommand,
+            restartCommand: restartCommand.isEmpty ? nil : restartCommand
+        )
+        manager.updateService(service, with: config)
+        dismiss()
+    }
+}
+
+// MARK: - Plain Text Editor (without smart quotes)
+
+struct PlainTextEditor: NSViewRepresentable {
+    @Binding var text: String
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSTextView.scrollableTextView()
+        let textView = scrollView.documentView as! NSTextView
+
+        textView.delegate = context.coordinator
+        textView.isRichText = false
+        textView.font = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+        textView.isAutomaticQuoteSubstitutionEnabled = false
+        textView.isAutomaticDashSubstitutionEnabled = false
+        textView.isAutomaticTextReplacementEnabled = false
+        textView.isAutomaticSpellingCorrectionEnabled = false
+        textView.textContainerInset = NSSize(width: 8, height: 8)
+
+        return scrollView
+    }
+
+    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        let textView = scrollView.documentView as! NSTextView
+        if textView.string != text {
+            textView.string = text
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    class Coordinator: NSObject, NSTextViewDelegate {
+        let parent: PlainTextEditor
+
+        init(_ parent: PlainTextEditor) {
+            self.parent = parent
+        }
+
+        func textDidChange(_ notification: Notification) {
+            guard let textView = notification.object as? NSTextView else { return }
+            parent.text = textView.string
+        }
+    }
+}
+
+// MARK: - JSON Editor View
+
+struct JSONEditorView: View {
+    @Environment(\.dismiss) var dismiss
+    @ObservedObject var manager: ServiceManager
+
+    @State private var jsonText: String = ""
+    @State private var errorMessage: String?
+    @State private var isValidJSON: Bool = true
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                // Error banner
+                if let error = errorMessage {
+                    HStack {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundColor(.red)
+                        Text(error)
+                            .font(.caption)
+                            .foregroundColor(.red)
+                        Spacer()
+                    }
+                    .padding()
+                    .background(Color.red.opacity(0.1))
+                }
+
+                // JSON Editor
+                PlainTextEditor(text: $jsonText)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .onChange(of: jsonText) { oldValue, newValue in
+                        validateJSON()
+                    }
+            }
+            .navigationTitle("Edit Services JSON")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
@@ -1157,41 +1729,57 @@ struct EditServiceView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
-                        updateService()
+                        saveJSON()
                     }
-                    .disabled(name.isEmpty || command.isEmpty || workingDirectory.isEmpty)
+                    .disabled(!isValidJSON)
                 }
             }
         }
-        .frame(minWidth: 500, minHeight: 400)
+        .frame(minWidth: 700, minHeight: 500)
         .onAppear {
-            // Pre-populate fields
-            name = service.config.name
-            command = service.config.command
-            workingDirectory = service.config.workingDirectory
-            port = service.config.port.map { "\($0)" } ?? ""
-            envVars = service.config.environment.map { EnvVar(key: $0.key, value: $0.value) }
+            loadJSON()
         }
     }
 
-    func updateService() {
-        let portInt = Int(port)
-        let envDict = Dictionary(uniqueKeysWithValues: envVars.filter { !$0.key.isEmpty }.map { ($0.key, $0.value) })
+    func loadJSON() {
+        let configs = manager.services.map { $0.config }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
 
-        let config = ServiceConfig(
-            id: service.config.id, // Keep same ID
-            name: name,
-            command: command,
-            workingDirectory: workingDirectory,
-            port: portInt,
-            environment: envDict
-        )
-
-        manager.updateService(service, with: config)
-        dismiss()
+        if let jsonData = try? encoder.encode(configs),
+           let jsonString = String(data: jsonData, encoding: .utf8) {
+            jsonText = jsonString
+        }
     }
 
-    func removeEnvVar(_ envVar: EnvVar) {
-        envVars.removeAll { $0.id == envVar.id }
+    func validateJSON() {
+        guard let jsonData = jsonText.data(using: .utf8) else {
+            errorMessage = "Invalid text encoding"
+            isValidJSON = false
+            return
+        }
+
+        do {
+            let _ = try JSONDecoder().decode([ServiceConfig].self, from: jsonData)
+            errorMessage = nil
+            isValidJSON = true
+        } catch {
+            errorMessage = "Invalid JSON: \(error.localizedDescription)"
+            isValidJSON = false
+        }
+    }
+
+    func saveJSON() {
+        guard let jsonData = jsonText.data(using: .utf8),
+              let configs = try? JSONDecoder().decode([ServiceConfig].self, from: jsonData) else {
+            return
+        }
+
+        // Replace all services with new ones
+        manager.services = configs.map { ServiceRuntime(config: $0) }
+        manager.saveServices()
+        manager.objectWillChange.send()
+
+        dismiss()
     }
 }

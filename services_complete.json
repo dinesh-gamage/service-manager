@@ -1,24 +1,27 @@
 [
   {
-    "id": "A1B2C3D4-E5F6-4A01-B123-456789ABCDEF",
+    "id": "A1B2C3D4-E5F6-7890-ABCD-EF1234567890",
     "name": "Docker Desktop",
-    "command": "open -a Docker",
+    "command": "/usr/bin/open -a Docker && while ! /usr/local/bin/docker info >/dev/null 2>&1; do sleep 1; done",
     "workingDirectory": "/Users/dineshgamage",
-    "port": null,
-    "environment": {}
+    "environment": {},
+    "checkCommand": "/usr/bin/pgrep -x 'Docker Desktop' >/dev/null && exit 1 || exit 0",
+    "stopCommand": "/usr/bin/pkill -x 'Docker Desktop'"
   },
   {
     "id": "B2C3D4E5-F6A7-4B02-C234-56789ABCDEF0",
     "name": "SQL Server",
-    "command": "docker start sqlserver",
+    "command": "/usr/local/bin/docker start sqlserver",
     "workingDirectory": "/Users/dineshgamage",
     "port": 1433,
-    "environment": {}
+    "environment": {},
+    "checkCommand": "/usr/local/bin/docker ps --filter name=sqlserver --filter status=running -q | /usr/bin/grep -q . && exit 1 || exit 0",
+    "stopCommand": "/usr/local/bin/docker stop sqlserver"
   },
   {
     "id": "C3D4E5F6-A7B8-4C03-D345-6789ABCDEF01",
     "name": "Redis",
-    "command": "brew services start redis",
+    "command": "/opt/homebrew/bin/redis-server",
     "workingDirectory": "/Users/dineshgamage",
     "port": 6379,
     "environment": {}
@@ -26,7 +29,7 @@
   {
     "id": "D4E5F6A7-B8C9-4D04-E456-789ABCDEF012",
     "name": "MongoDB",
-    "command": "brew services start mongodb-community@5.0",
+    "command": "/opt/homebrew/opt/mongodb-community@5.0/bin/mongod --config /opt/homebrew/etc/mongod.conf",
     "workingDirectory": "/Users/dineshgamage",
     "port": 27017,
     "environment": {}
@@ -34,7 +37,7 @@
   {
     "id": "E5F6A7B8-C9D0-4E05-F567-89ABCDEF0123",
     "name": "RabbitMQ",
-    "command": "brew services start rabbitmq",
+    "command": "/opt/homebrew/sbin/rabbitmq-server",
     "workingDirectory": "/Users/dineshgamage",
     "port": 5672,
     "environment": {}
