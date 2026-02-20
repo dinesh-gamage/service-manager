@@ -95,26 +95,29 @@ struct VariantButton: View {
     let icon: String?
     let variant: ComponentVariant
     let tooltip: String?
+    let isLoading: Bool
     let action: () -> Void
 
     @ObservedObject var accentColor = AppTheme.AccentColor.shared
     @State private var isHovered = false
 
     // Icon-only button
-    init(icon: String, variant: ComponentVariant = .primary, tooltip: String? = nil, action: @escaping () -> Void) {
+    init(icon: String, variant: ComponentVariant = .primary, tooltip: String? = nil, isLoading: Bool = false, action: @escaping () -> Void) {
         self.label = nil
         self.icon = icon
         self.variant = variant
         self.tooltip = tooltip
+        self.isLoading = isLoading
         self.action = action
     }
 
     // Labeled button (with optional icon)
-    init(_ label: String, icon: String? = nil, variant: ComponentVariant = .primary, action: @escaping () -> Void) {
+    init(_ label: String, icon: String? = nil, variant: ComponentVariant = .primary, isLoading: Bool = false, action: @escaping () -> Void) {
         self.label = label
         self.icon = icon
         self.variant = variant
         self.tooltip = nil
+        self.isLoading = isLoading
         self.action = action
     }
 
@@ -123,34 +126,48 @@ struct VariantButton: View {
             // Labeled button
             Button(action: action) {
                 HStack(spacing: 6) {
-                    if let icon = icon {
+                    if isLoading {
+                        ProgressView()
+                            .scaleEffect(0.7)
+                            .frame(width: 13, height: 13)
+                    } else if let icon = icon {
                         Image(systemName: icon)
                             .font(.system(size: 13))
                     }
                     Text(label)
                         .font(.system(size: 13, weight: .medium))
                 }
-                .padding(.horizontal, icon != nil ? 6 : 6)
+                .padding(.horizontal, icon != nil || isLoading ? 6 : 6)
                 .padding(.vertical, 6)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .background(variant.color)
             .foregroundColor(.white)
             .cornerRadius(4)
+            .disabled(isLoading)
+            .opacity(isLoading ? 0.7 : 1.0)
         } else if let icon = icon {
             // Icon-only circular button
             Button(action: action) {
-                Image(systemName: icon)
-                    .font(.system(size: 14))
-                    .foregroundColor(variant.color)
-                    .frame(width: 26, height: 26)
-                    .background(
-                        Circle()
-                            .fill(isHovered ? variant.hoverBackground : AppTheme.clearColor)
-                    )
+                if isLoading {
+                    ProgressView()
+                        .scaleEffect(0.6)
+                        .frame(width: 26, height: 26)
+                } else {
+                    Image(systemName: icon)
+                        .font(.system(size: 14))
+                        .foregroundColor(variant.color)
+                        .frame(width: 26, height: 26)
+                        .background(
+                            Circle()
+                                .fill(isHovered ? variant.hoverBackground : AppTheme.clearColor)
+                        )
+                }
             }
             .buttonStyle(.plain)
             .help(tooltip ?? "")
+            .disabled(isLoading)
             .onHover { hovering in
                 isHovered = hovering
             }

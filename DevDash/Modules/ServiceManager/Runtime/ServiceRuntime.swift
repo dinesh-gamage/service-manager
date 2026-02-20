@@ -9,6 +9,13 @@ import Foundation
 import SwiftUI
 import Combine
 
+enum ServiceAction {
+    case starting
+    case stopping
+    case restarting
+    case killingAndRestarting
+}
+
 @MainActor
 class ServiceRuntime: ObservableObject, Identifiable, Hashable, OutputViewDataSource {
 
@@ -21,6 +28,7 @@ class ServiceRuntime: ObservableObject, Identifiable, Hashable, OutputViewDataSo
     @Published var conflictingPID: Int? = nil
     @Published var errors: [LogEntry] = []
     @Published var warnings: [LogEntry] = []
+    @Published var processingAction: ServiceAction? = nil
 
     private var process: Process?
     private var pipe: Pipe?
@@ -186,6 +194,7 @@ class ServiceRuntime: ObservableObject, Identifiable, Hashable, OutputViewDataSo
     func start() {
         if isRunning { return }
 
+        processingAction = .starting
         logs = ""
         logLines = []
         errors = []
@@ -325,15 +334,20 @@ class ServiceRuntime: ObservableObject, Identifiable, Hashable, OutputViewDataSo
                         self.process = nil
                         self.isRunning = false
                     }
+                    self.processingAction = nil
                 }
             }
 
             do {
                 try process.run()
-                await MainActor.run { self.isRunning = true }
+                await MainActor.run {
+                    self.isRunning = true
+                    self.processingAction = nil
+                }
             } catch {
                 await MainActor.run {
                     self.logs += "Failed to start process: \(error.localizedDescription)\n"
+                    self.processingAction = nil
                 }
             }
         }
@@ -459,6 +473,7 @@ class ServiceRuntime: ObservableObject, Identifiable, Hashable, OutputViewDataSo
     // Kill conflicting process and restart
     func killAndRestart() {
         guard let pid = conflictingPID else { return }
+        processingAction = .killingAndRestarting
         Task {
             let success = await Task.detached(priority: .userInitiated) { () -> Bool in
                 let task = Process()
@@ -476,12 +491,14 @@ class ServiceRuntime: ObservableObject, Identifiable, Hashable, OutputViewDataSo
                 start()
             } else {
                 logs += "Failed to kill process \(pid)\n"
+                processingAction = nil
             }
         }
     }
 
     // Stop the service
     func stop() {
+        processingAction = .stopping
         stopFlushTimer()
         pipe?.fileHandleForReading.readabilityHandler = nil
         let config = self.config
@@ -508,6 +525,7 @@ class ServiceRuntime: ObservableObject, Identifiable, Hashable, OutputViewDataSo
                 process = nil
                 isRunning = false
                 isExternallyManaged = false
+                processingAction = nil
             }
             return
         }
@@ -519,6 +537,7 @@ class ServiceRuntime: ObservableObject, Identifiable, Hashable, OutputViewDataSo
             process = nil
             isRunning = false
             isExternallyManaged = false
+            processingAction = nil
             Task {
                 try? await Task.sleep(nanoseconds: 500_000_000)
                 let stillRunning = await Task.detached(priority: .userInitiated) { proc.isRunning }.value
@@ -564,18 +583,21 @@ class ServiceRuntime: ObservableObject, Identifiable, Hashable, OutputViewDataSo
                 isExternallyManaged = false
                 hasPortConflict = false
                 conflictingPID = nil
+                processingAction = nil
             }
             return
         }
 
         // Case 4: no way to stop
         logs += "[Stop] Cannot stop: no stop command or port configured\n"
+        processingAction = nil
     }
 
     // Restart the service
     func restart() {
         let config = self.config
         if let restartCmd = config.restartCommand, !restartCmd.isEmpty {
+            processingAction = .restarting
             Task {
                 let output = await Task.detached(priority: .userInitiated) { () -> String in
                     let task = Process()
@@ -594,6 +616,7 @@ class ServiceRuntime: ObservableObject, Identifiable, Hashable, OutputViewDataSo
                 }.value
                 if !output.isEmpty { logs += output }
                 logs += "[Restart] Command completed\n"
+                processingAction = nil
             }
         } else {
             stop()

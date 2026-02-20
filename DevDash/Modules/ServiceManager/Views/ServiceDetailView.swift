@@ -22,32 +22,37 @@ struct ServiceDetailView: View {
                             Badge("Running outside DevDash", icon: "exclamationmark.triangle", variant: .warning)
                         }
 
-                        VariantButton("Stop", variant: .danger) {
+                        VariantButton("Stop", variant: .danger, isLoading: service.processingAction == .stopping) {
                             service.stop()
                         }
+                        .disabled(service.processingAction != nil)
 
-                        VariantButton("Restart", variant: .warning) {
+                        VariantButton("Restart", variant: .warning, isLoading: service.processingAction == .restarting) {
                             service.restart()
                         }
+                        .disabled(service.processingAction != nil)
 
                         if service.isExternallyManaged {
-                            VariantButton("Kill & Start", variant: .danger) {
+                            VariantButton("Kill & Start", variant: .danger, isLoading: service.processingAction == .stopping) {
                                 service.stop()
                                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                                     service.start()
                                 }
                             }
+                            .disabled(service.processingAction != nil)
                         }
                     } else if service.hasPortConflict {
                         Badge("Port \(service.config.port ?? 0) in use (PID: \(service.conflictingPID ?? 0))", icon: "exclamationmark.triangle", variant: .warning)
 
-                        VariantButton("Kill & Restart", variant: .danger) {
+                        VariantButton("Kill & Restart", variant: .danger, isLoading: service.processingAction == .killingAndRestarting) {
                             service.killAndRestart()
                         }
+                        .disabled(service.processingAction != nil)
                     } else {
-                        VariantButton("Start", icon: "play.fill", variant: .primary) {
+                        VariantButton("Start", icon: "play.fill", variant: .primary, isLoading: service.processingAction == .starting) {
                             service.start()
                         }
+                        .disabled(service.processingAction != nil)
                     }
 
                     VariantButton(icon: "arrow.clockwise", variant: .secondary, tooltip: "Check service status") {
