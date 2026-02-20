@@ -8,51 +8,143 @@ DevDash is a native macOS application built with SwiftUI for managing local deve
 1. **Service Management** - Start/stop local development services, view logs, track errors/warnings, handle port conflicts
 2. **EC2 Instance IP Tracking** - Fetch and cache public IPs for AWS EC2 instances organized by region/environment groups
 
+## Development Rules
+
+**These rules override all other considerations:**
+
+1. **Performance First** - This app must remain lightweight with zero performance impact. Prevent memory leaks, ensure proper garbage collection, and clean up all resources (processes, tasks, observers). Profile memory usage for any significant changes.
+
+2. **No Guessing, No Patronizing** - If you don't know or are unsure about implementation details, say so explicitly. Do not make assumptions. Ask clarifying questions before proceeding.
+
+3. **Keep it DRY** - Eliminate code duplication. Extract shared logic to Core utilities. Reuse existing components before creating new ones.
+
+4. **User-Friendly & Intuitive** - Design simple, clear interfaces. Provide immediate visual feedback. Make actions reversible where possible. Minimize cognitive load.
+
 ## Architecture
 
-### Single-File Architecture
-The entire application logic is in `DevDash/ContentView.swift` (~2000 lines). Key components:
+### Modular System
+The app uses a **module-based architecture** where each feature is an independent, self-contained module:
 
-**EC2 Models:**
-- **EC2Instance** (lines 15-29): Instance name, ID, cached IP, last fetch timestamp
-- **InstanceGroup** (lines 31-45): Regional grouping with AWS profile, region, and instances list
-- **InstanceGroupManager** (lines 728-838): Manages EC2 groups, fetches IPs via `aws-vault exec` + AWS CLI
+**Module Protocol** (`Core/Models/Module.swift`):
+- **DevDashModule** (lines 13-25): Protocol defining module interface (id, name, icon, accentColor, sidebar/detail views)
+- **ModuleRegistry** (lines 29-46): Singleton managing module registration and lookup
 
-**Service Models:**
-- **ServiceConfig** (lines 50-90): Codable model representing service configuration (name, command, working directory, port, environment variables)
-- **ServiceRuntime** (lines 109-724): ObservableObject managing process lifecycle, log streaming, error/warning parsing, port conflict detection
-- **ServiceManager** (lines 840-970): Data layer handling persistence (UserDefaults), import/export (JSON), CRUD operations
+**Current Modules:**
+- **ServiceManagerModule** (`Modules/ServiceManager/`) - Service lifecycle management
+- **EC2ManagerModule** (`Modules/EC2Manager/`) - AWS EC2 instance IP tracking
 
-**Views:**
-- **ContentView** (lines 972-1117): Main split view with dual-section sidebar (Services + EC2 Instances)
-- **ServiceDetailView** (lines 1163-1357): Service control panel with logs, errors, warnings
-- **InstanceGroupDetailView** (lines 1912-1997): EC2 instance table with IP fetch functionality
-- **LogView** (lines 1478-1631): Search-enabled log viewer with debouncing and syntax highlighting
+### Directory Structure
+```
+DevDash/
+├── Core/                     # Shared infrastructure
+│   ├── Models/              # Module protocol, registry
+│   ├── Components/          # Reusable UI (buttons, forms, logs, etc.)
+│   ├── Theme/              # AppTheme, typography, colors
+│   ├── Utilities/          # Helpers (LogParser, StorageManager, etc.)
+│   └── Protocols/          # Shared interfaces
+├── Modules/                 # Feature modules
+│   ├── ServiceManager/
+│   └── EC2Manager/
+├── ContentView.swift        # Root navigation
+└── DevDashApp.swift        # App entry + module registration
+```
 
-### EC2 Instance Management
-Instance groups managed via `InstanceGroupManager`:
-- **aws-vault Integration**: Uses `aws-vault exec {profile}` for AWS credential management
-- **IP Fetching**: Runs `aws ec2 describe-instances` via AWS CLI asynchronously (Task.detached)
-- **Persistence**: Stores groups and last known IPs in UserDefaults with key "instanceGroups"
-- **Default Groups**: Lucy (ap-southeast-1), Sydney (ap-southeast-2), Canvas (ap-southeast-1)
-- **UI**: Table view showing instance name, ID, cached IP, last fetch time, and fetch button
+### Service Manager Module
 
-### Process Management
-Services run as shell processes using `/bin/zsh`. The app:
+Key components in `Modules/ServiceManager/`:
+
+**ServiceManagerModule.swift**:
+- **ServiceManagerState**: Singleton @ObservableObject managing module state, alerts, selected service
+- **ServiceManagerSidebarView**: Toolbar + service list with add/edit/delete/import/export
+- **ServiceManagerDetailView**: Detail pane showing selected service or empty state
+
+**Models/ServiceModels.swift**:
+- **ServiceConfig**: Codable config model (name, command, workingDir, port, env vars)
+
+**Runtime/ServiceRuntime.swift**:
+- **ServiceRuntime**: ObservableObject managing process lifecycle, log streaming, error/warning parsing
+- Runs services as `/bin/zsh` processes with Pipe-based stdout/stderr streaming
+- Ring buffer for logs with proactive trimming at maxLogLines
+- Real-time log parsing for errors/warnings with stack trace detection
+
+**Managers/ServiceManager.swift**:
+- **ServiceManager**: Data layer handling persistence (UserDefaults), import/export (JSON), CRUD operations
+- Stores services in UserDefaults with key "services"
+
+**Views/**:
+- **ServiceDetailView**: Control panel with start/stop, logs, errors, warnings tabs
+- **ServiceListItem**: Sidebar list item with status indicators
+- **AddServiceView, EditServiceView**: Forms for service CRUD
+- **JSONEditorView**: Direct JSON editing with validation
+
+### EC2 Manager Module
+
+Key components in `Modules/EC2Manager/`:
+
+**EC2ManagerModule.swift**:
+- **EC2ManagerState**: Singleton managing groups, selected group, instance CRUD operations
+- **EC2ManagerSidebarView**: Toolbar + instance group list with add/edit/delete/import/export
+- **EC2ManagerDetailView**: Detail pane for selected group
+
+**Models/EC2Models.swift**:
+- **EC2Instance**: Instance name, ID, cached IP, last fetch timestamp, fetch error
+- **InstanceGroup**: Regional grouping with AWS profile, region, instances list
+
+**Managers/InstanceGroupManager.swift**:
+- Manages EC2 groups with aws-vault integration via `aws-vault exec {profile}`
+- Runs `aws ec2 describe-instances` asynchronously (Task.detached)
+- Stores groups in UserDefaults with key "instanceGroups"
+- Default groups: Lucy (ap-southeast-1), Sydney (ap-southeast-2), Canvas (ap-southeast-1)
+
+**Views/**:
+- **InstanceGroupDetailView**: Table showing instance name, ID, cached IP, last fetch time, fetch button
+- **AddInstanceGroupView, EditInstanceGroupView**: Group CRUD forms
+- **AddInstanceView, EditInstanceView**: Instance CRUD forms
+- **InstanceGroupJSONEditorView**: Direct JSON editing
+
+### Core Infrastructure
+
+**Process Management** (ServiceRuntime):
+- Services run as `/bin/zsh` processes
 - Streams stdout/stderr via Pipe with live readability handler
-- Uses ring buffer for logs (fixed-size, proactive trimming at maxLogLines)
-- Parses logs line-by-line for errors/warnings with configurable patterns
-- Detects stack traces following error lines
-- Uses `lsof` to detect port conflicts
-- Can kill conflicting processes and restart
-
-### Log Parsing & Performance
-Pattern-based detection:
-- Error patterns: "error", "fail", "exception", "panic", "traceback", etc.
-- Warning patterns: "warning", "deprecated", "caution", etc.
+- Ring buffer storage with fixed size and proactive trimming
+- Pattern-based error/warning detection
 - Automatic stack trace collection after errors
-- LogEntry model stores message, line number, timestamp, type, and optional stack trace
-- **Optimizations**: Debounced search (300ms), lazy virtualized rendering, ring buffer storage
+- Port conflict detection via `lsof`
+- Process termination and restart capabilities
+
+**Reusable UI Components** (`Core/Components/`):
+- **VariantComponents**: Buttons with primary/danger/ghost variants
+- **FormComponents**: Form fields, labels, text editors
+- **ServiceOutputPanel**: Log viewer with search and error/warning tabs
+- **LogView**: Virtualized log rendering with syntax highlighting
+- **CopyableField**: One-click copy text fields
+- **RelativeTimeText**: Auto-updating relative timestamps
+- **ErrorWarningListView**: Shared error/warning list display
+- **ModuleDetailHeader**: Standard header for module detail views
+- **ModuleSidebarList**: Reusable sidebar list with toolbar
+
+**Utilities** (`Core/Utilities/`):
+- **LogParser**: Real-time error/warning detection with pattern matching
+  - Error patterns: "error", "fail", "exception", "panic", "traceback", etc.
+  - Warning patterns: "warning", "deprecated", "caution", etc.
+  - Automatic stack trace collection after errors
+- **ProcessEnvironment**: Shell environment variable resolution
+- **StorageManager**: UserDefaults persistence layer with Codable support
+- **ImportExportManager**: JSON import/export with file panels (NSSavePanel/NSOpenPanel)
+- **AlertQueue**: Sequential alert presentation to prevent overlapping dialogs
+
+**Theme System** (`Core/Theme/AppTheme.swift`):
+- Centralized typography (h1, h2, h3, body, caption)
+- Color palette with gradient support
+- Responsive accent color switching per module
+
+**Performance Optimizations**:
+- Debounced search (300ms delay)
+- Lazy virtualized log rendering
+- Ring buffer storage for logs (fixed size, automatic trimming)
+- Async operations for shell commands and AWS CLI calls
+- Proper resource cleanup (processes, tasks, observers)
 
 ## Development Commands
 
