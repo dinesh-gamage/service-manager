@@ -10,10 +10,16 @@ import SwiftUI
 struct InstanceGroupDetailView: View {
     @ObservedObject var manager: InstanceGroupManager
     @ObservedObject var state = EC2ManagerState.shared
-    let group: InstanceGroup
+    let groupId: UUID
+
+    // Compute current group from manager's live data
+    var group: InstanceGroup? {
+        manager.groups.first(where: { $0.id == groupId })
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        if let group = group {
+            VStack(alignment: .leading, spacing: 0) {
             // Header
             ModuleDetailHeader(
                 title: group.name,
@@ -52,17 +58,17 @@ struct InstanceGroupDetailView: View {
                 .width(min: 150, ideal: 180, max: 250)
 
                 TableColumn("Last Known IP") { instance in
-                    if let error = instance.fetchError {
+                    if manager.isFetching[instance.id] == true {
                         HStack(spacing: 6) {
-                            Image(systemName: "exclamationmark.triangle.fill")
+                            ProgressView()
+                                .scaleEffect(0.7)
+                            Text("Fetching...")
                                 .font(.caption)
-                                .foregroundColor(.orange)
-                            Text(error)
-                                .font(.caption)
-                                .foregroundColor(.orange)
-                                .lineLimit(1)
-                                .help(error)
+                                .foregroundColor(.secondary)
                         }
+                    } else if let error = instance.fetchError {
+                        Badge("Error", variant: .danger)
+                            .help(error)
                     } else if let ip = instance.lastKnownIP {
                         InlineCopyableText(ip, monospaced: true)
                     } else {
@@ -73,8 +79,12 @@ struct InstanceGroupDetailView: View {
                 .width(min: 120, ideal: 200, max: 300)
 
                 TableColumn("Last Fetched") { instance in
-                    if let date = instance.lastFetched {
-                        Text(date, style: .relative)
+                    if manager.isFetching[instance.id] == true {
+                        Text("Fetching...")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    } else if let date = instance.lastFetched {
+                        RelativeTimeText(date: date)
                             .font(.caption)
                             .foregroundColor(.secondary)
                     } else {
@@ -141,6 +151,14 @@ struct InstanceGroupDetailView: View {
             if let instance = state.instanceToDelete {
                 Text("Are you sure you want to delete '\(instance.name)' (\(instance.instanceId))?")
             }
+        }
+        } else {
+            // Fallback if group not found
+            VStack {
+                Text("Group not found")
+                    .foregroundColor(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 }

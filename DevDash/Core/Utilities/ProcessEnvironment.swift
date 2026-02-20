@@ -1,0 +1,74 @@
+//
+//  ProcessEnvironment.swift
+//  DevDash
+//
+//  Created by Dinesh Gamage on 2026-02-20.
+//
+
+import Foundation
+
+/// Manages process environment variables, particularly resolving the user's actual shell PATH
+/// macOS GUI apps don't inherit the user's shell PATH from .zshrc/.zprofile
+/// This utility discovers and caches the user's PATH on first access
+class ProcessEnvironment {
+    static let shared = ProcessEnvironment()
+
+    private var cachedUserPath: String?
+    private let lock = NSLock()
+
+    private init() {}
+
+    /// Get the user's actual PATH from their login shell
+    /// This is cached after first access for performance
+    private func getUserPath() -> String {
+        lock.lock()
+        defer { lock.unlock() }
+
+        if let cached = cachedUserPath {
+            return cached
+        }
+
+        // Discover PATH by running a login shell
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        process.arguments = ["-l", "-c", "echo $PATH"]
+
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            if let path = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !path.isEmpty {
+                cachedUserPath = path
+                return path
+            }
+        } catch {
+            // Fall back to ProcessInfo if discovery fails
+        }
+
+        // Fallback: use ProcessInfo's PATH (will be limited to system defaults)
+        let fallbackPath = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
+        cachedUserPath = fallbackPath
+        return fallbackPath
+    }
+
+    /// Get environment dictionary with user's actual PATH and optional additional variables
+    /// - Parameter additionalVars: Optional dictionary of additional environment variables to merge
+    /// - Returns: Environment dictionary suitable for Process.environment
+    func getEnvironment(additionalVars: [String: String] = [:]) -> [String: String] {
+        var env = ProcessInfo.processInfo.environment
+        env["PATH"] = getUserPath()
+
+        // Merge additional variables (these override any existing)
+        for (key, value) in additionalVars {
+            env[key] = value
+        }
+
+        return env
+    }
+}

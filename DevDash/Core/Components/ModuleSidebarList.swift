@@ -143,6 +143,7 @@ struct ModuleSidebarListItem: View {
                 }
             }
         }
+        .frame(minHeight: 25)
         .padding(.vertical, AppTheme.itemVerticalPadding)
         .padding(.horizontal, AppTheme.itemHorizontalPadding)
         .contentShape(Rectangle())

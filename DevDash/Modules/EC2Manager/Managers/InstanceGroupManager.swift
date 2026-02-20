@@ -49,6 +49,13 @@ class InstanceGroupManager: ObservableObject {
     }
 
     func fetchInstanceIP(group: InstanceGroup, instance: EC2Instance) {
+        // Clear previous error immediately
+        if let groupIndex = groups.firstIndex(where: { $0.id == group.id }),
+           let instanceIndex = groups[groupIndex].instances.firstIndex(where: { $0.id == instance.id }) {
+            groups[groupIndex].instances[instanceIndex].fetchError = nil
+            objectWillChange.send()
+        }
+
         isFetching[instance.id] = true
 
         Task.detached(priority: .userInitiated) {
@@ -56,17 +63,8 @@ class InstanceGroupManager: ObservableObject {
 
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-            process.arguments = ["-l", "-c", command] // -l flag loads user's profile
-
-            // Set environment to include common binary paths
-            var environment = ProcessInfo.processInfo.environment
-            let extraPaths = ["/usr/local/bin", "/opt/homebrew/bin", "/usr/bin", "/bin"]
-            if let existingPath = environment["PATH"] {
-                environment["PATH"] = extraPaths.joined(separator: ":") + ":" + existingPath
-            } else {
-                environment["PATH"] = extraPaths.joined(separator: ":")
-            }
-            process.environment = environment
+            process.arguments = ["-c", command]
+            process.environment = ProcessEnvironment.shared.getEnvironment()
 
             let outputPipe = Pipe()
             let errorPipe = Pipe()

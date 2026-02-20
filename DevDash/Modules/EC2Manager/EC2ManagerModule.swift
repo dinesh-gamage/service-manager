@@ -156,7 +156,7 @@ struct EC2ManagerDetailView: View {
 
     var body: some View {
         if let group = state.selectedGroup {
-            InstanceGroupDetailView(manager: state.manager, group: group)
+            InstanceGroupDetailView(manager: state.manager, groupId: group.id)
         } else {
             VStack(spacing: 16) {
                 Image(systemName: "cloud")

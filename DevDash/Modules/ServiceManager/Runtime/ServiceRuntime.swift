@@ -227,6 +227,7 @@ class ServiceRuntime: ObservableObject, Identifiable, Hashable {
                         task.executableURL = URL(fileURLWithPath: "/bin/zsh")
                         task.arguments = ["-c", prereq.command]
                         task.currentDirectoryURL = URL(fileURLWithPath: config.workingDirectory)
+                        task.environment = ProcessEnvironment.shared.getEnvironment(additionalVars: config.environment)
                         let pipe = Pipe()
                         task.standardOutput = pipe
                         task.standardError = pipe
@@ -298,10 +299,7 @@ class ServiceRuntime: ObservableObject, Identifiable, Hashable {
             process.executableURL = URL(fileURLWithPath: "/bin/zsh")
             process.arguments = ["-c", config.command]
             process.currentDirectoryURL = URL(fileURLWithPath: config.workingDirectory)
-
-            var env = ProcessInfo.processInfo.environment
-            for (key, value) in config.environment { env[key] = value }
-            process.environment = env
+            process.environment = ProcessEnvironment.shared.getEnvironment(additionalVars: config.environment)
 
             process.standardOutput = pipe
             process.standardError = pipe
@@ -414,6 +412,7 @@ class ServiceRuntime: ObservableObject, Identifiable, Hashable {
                 task.executableURL = URL(fileURLWithPath: "/bin/zsh")
                 task.arguments = ["-c", checkCmd]
                 task.currentDirectoryURL = URL(fileURLWithPath: config.workingDirectory)
+                task.environment = ProcessEnvironment.shared.getEnvironment(additionalVars: config.environment)
                 do {
                     try task.run()
                     task.waitUntilExit()
@@ -505,6 +504,7 @@ class ServiceRuntime: ObservableObject, Identifiable, Hashable {
                     task.executableURL = URL(fileURLWithPath: "/bin/zsh")
                     task.arguments = ["-c", stopCmd]
                     task.currentDirectoryURL = URL(fileURLWithPath: config.workingDirectory)
+                    task.environment = ProcessEnvironment.shared.getEnvironment(additionalVars: config.environment)
                     let pipe = Pipe()
                     task.standardOutput = pipe
                     task.standardError = pipe
@@ -592,6 +592,7 @@ class ServiceRuntime: ObservableObject, Identifiable, Hashable {
                     task.executableURL = URL(fileURLWithPath: "/bin/zsh")
                     task.arguments = ["-c", restartCmd]
                     task.currentDirectoryURL = URL(fileURLWithPath: config.workingDirectory)
+                    task.environment = ProcessEnvironment.shared.getEnvironment(additionalVars: config.environment)
                     let pipe = Pipe()
                     task.standardOutput = pipe
                     task.standardError = pipe
