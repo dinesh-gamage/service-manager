@@ -8,11 +8,14 @@
 import Foundation
 import SwiftUI
 import Combine
+import UniformTypeIdentifiers
 
 @MainActor
 class InstanceGroupManager: ObservableObject {
     @Published var groups: [InstanceGroup] = []
     @Published var isFetching: [UUID: Bool] = [:]
+    @Published var importMessage: String?
+    @Published var showImportAlert = false
 
     init() {
         loadGroups()
@@ -78,6 +81,119 @@ class InstanceGroupManager: ObservableObject {
             } catch {
                 await MainActor.run {
                     self.isFetching[instance.id] = false
+                }
+            }
+        }
+    }
+
+    // MARK: - Group CRUD
+
+    func addGroup(_ group: InstanceGroup) {
+        groups.append(group)
+        saveGroups()
+    }
+
+    func updateGroup(groupId: UUID, newGroup: InstanceGroup) {
+        if let index = groups.firstIndex(where: { $0.id == groupId }) {
+            groups[index] = newGroup
+            saveGroups()
+            objectWillChange.send()
+        }
+    }
+
+    func deleteGroup(at offsets: IndexSet) {
+        groups.remove(atOffsets: offsets)
+        saveGroups()
+    }
+
+    // MARK: - Instance CRUD
+
+    func addInstance(groupId: UUID, instance: EC2Instance) {
+        if let index = groups.firstIndex(where: { $0.id == groupId }) {
+            groups[index].instances.append(instance)
+            saveGroups()
+        }
+    }
+
+    func updateInstanceData(groupId: UUID, instanceId: UUID, newInstance: EC2Instance) {
+        if let groupIndex = groups.firstIndex(where: { $0.id == groupId }),
+           let instanceIndex = groups[groupIndex].instances.firstIndex(where: { $0.id == instanceId }) {
+            groups[groupIndex].instances[instanceIndex] = newInstance
+            saveGroups()
+        }
+    }
+
+    func deleteInstance(groupId: UUID, instanceId: UUID) {
+        if let groupIndex = groups.firstIndex(where: { $0.id == groupId }),
+           let instanceIndex = groups[groupIndex].instances.firstIndex(where: { $0.id == instanceId }) {
+            groups[groupIndex].instances.remove(at: instanceIndex)
+            saveGroups()
+        }
+    }
+
+    // MARK: - Import/Export
+
+    func exportGroups() {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        guard let jsonData = try? encoder.encode(groups),
+              let jsonString = String(data: jsonData, encoding: .utf8) else {
+            return
+        }
+
+        let savePanel = NSSavePanel()
+        savePanel.allowedContentTypes = [.json]
+        savePanel.nameFieldStringValue = "ec2-groups.json"
+        savePanel.title = "Export EC2 Groups"
+
+        savePanel.begin { response in
+            if response == .OK, let url = savePanel.url {
+                try? jsonString.write(to: url, atomically: true, encoding: .utf8)
+            }
+        }
+    }
+
+    func importGroups() {
+        let openPanel = NSOpenPanel()
+        openPanel.allowedContentTypes = [.json]
+        openPanel.allowsMultipleSelection = false
+        openPanel.title = "Import EC2 Groups"
+
+        openPanel.begin { response in
+            if response == .OK, let url = openPanel.url,
+               let jsonData = try? Data(contentsOf: url),
+               let decoded = try? JSONDecoder().decode([InstanceGroup].self, from: jsonData) {
+
+                var newCount = 0
+                var updatedCount = 0
+
+                // Import groups - replace if name exists, add if new
+                for group in decoded {
+                    // Check if group with same name exists
+                    if let index = self.groups.firstIndex(where: { $0.name == group.name }) {
+                        // Replace existing group with same name
+                        self.groups[index] = group
+                        updatedCount += 1
+                    } else {
+                        // Add new group
+                        self.groups.append(group)
+                        newCount += 1
+                    }
+                }
+                self.saveGroups()
+
+                // Show confirmation
+                DispatchQueue.main.async {
+                    if newCount > 0 && updatedCount > 0 {
+                        self.importMessage = "Imported \(newCount) new group(s) and updated \(updatedCount) existing group(s)."
+                    } else if newCount > 0 {
+                        self.importMessage = "Imported \(newCount) new group(s)."
+                    } else if updatedCount > 0 {
+                        self.importMessage = "Updated \(updatedCount) existing group(s)."
+                    } else {
+                        self.importMessage = "No changes made."
+                    }
+                    self.showImportAlert = true
                 }
             }
         }

@@ -9,27 +9,32 @@ import SwiftUI
 
 struct InstanceGroupDetailView: View {
     @ObservedObject var manager: InstanceGroupManager
+    @ObservedObject var state = EC2ManagerState.shared
     let group: InstanceGroup
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Header
-            VStack(alignment: .leading, spacing: 8) {
-                Text(group.name)
-                    .font(.title2)
-                    .fontWeight(.bold)
+            ModuleDetailHeader(
+                title: group.name,
+                metadata: [
+                    MetadataRow(icon: "globe", label: "Region", value: group.region),
+                    MetadataRow(icon: "key", label: "Profile", value: group.awsProfile)
+                ],
+                actionButtons: {
+                    HStack(spacing: 12) {
+                        VariantButton("Add Instance", icon: "plus", variant: .primary) {
+                            state.selectedGroupForInstance = group
+                            state.showingAddInstance = true
+                        }
 
-                HStack(spacing: 16) {
-                    Label("Region: \(group.region)", systemImage: "globe")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-
-                    Label("Profile: \(group.awsProfile)", systemImage: "key")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                        VariantButton("Edit Group", icon: "pencil", variant: .secondary) {
+                            state.groupToEdit = group
+                            state.showingEditGroup = true
+                        }
+                    }
                 }
-            }
-            .padding()
+            )
 
             Divider()
 
@@ -42,17 +47,13 @@ struct InstanceGroupDetailView: View {
                 .width(min: 100, ideal: 120, max: 200)
 
                 TableColumn("Instance ID") { instance in
-                    Text(instance.instanceId)
-                        .font(.system(.body, design: .monospaced))
-                        .textSelection(.enabled)
+                    InlineCopyableText(instance.instanceId, monospaced: true)
                 }
                 .width(min: 150, ideal: 180, max: 250)
 
                 TableColumn("Last Known IP") { instance in
                     if let ip = instance.lastKnownIP {
-                        Text(ip)
-                            .font(.system(.body, design: .monospaced))
-                            .textSelection(.enabled)
+                        InlineCopyableText(ip, monospaced: true)
                     } else {
                         Text("—")
                             .foregroundColor(.secondary)
@@ -74,20 +75,61 @@ struct InstanceGroupDetailView: View {
                 .width(min: 80, ideal: 100, max: 120)
 
                 TableColumn("") { instance in
-                    if manager.isFetching[instance.id] == true {
-                        ProgressView()
-                            .scaleEffect(0.7)
-                    } else {
-                        Button("Fetch IP") {
-                            manager.fetchInstanceIP(group: group, instance: instance)
+                    HStack(spacing: 6) {
+                        if manager.isFetching[instance.id] == true {
+                            ProgressView()
+                                .scaleEffect(0.7)
+                        } else {
+                            VariantButton(icon: "arrow.clockwise", variant: .primary, tooltip: "Fetch IP") {
+                                manager.fetchInstanceIP(group: group, instance: instance)
+                            }
                         }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
+
+                        VariantButton(icon: "pencil", variant: .secondary, tooltip: "Edit Instance") {
+                            state.selectedGroupForInstance = group
+                            state.instanceToEdit = instance
+                            state.showingEditInstance = true
+                        }
+
+                        VariantButton(icon: "trash", variant: .danger, tooltip: "Delete Instance") {
+                            state.selectedGroupForInstance = group
+                            state.instanceToDelete = instance
+                            state.showingDeleteInstanceConfirmation = true
+                        }
                     }
                 }
-                .width(min: 90, ideal: 90, max: 90)
+                .width(min: 120, ideal: 120, max: 120)
             }
             .padding()
+        }
+        .sheet(isPresented: $state.showingAddInstance) {
+            if let selectedGroup = state.selectedGroupForInstance {
+                AddInstanceView(manager: manager, group: selectedGroup)
+            }
+        }
+        .sheet(isPresented: $state.showingEditInstance) {
+            if let selectedGroup = state.selectedGroupForInstance,
+               let instance = state.instanceToEdit {
+                EditInstanceView(manager: manager, group: selectedGroup, instance: instance)
+            }
+        }
+        .alert("Delete Instance", isPresented: $state.showingDeleteInstanceConfirmation) {
+            Button("Cancel", role: .cancel) {
+                state.instanceToDelete = nil
+                state.selectedGroupForInstance = nil
+            }
+            Button("Delete", role: .destructive) {
+                if let selectedGroup = state.selectedGroupForInstance,
+                   let instance = state.instanceToDelete {
+                    manager.deleteInstance(groupId: selectedGroup.id, instanceId: instance.id)
+                    state.instanceToDelete = nil
+                    state.selectedGroupForInstance = nil
+                }
+            }
+        } message: {
+            if let instance = state.instanceToDelete {
+                Text("Are you sure you want to delete '\(instance.name)' (\(instance.instanceId))?")
+            }
         }
     }
 }
