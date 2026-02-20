@@ -14,29 +14,25 @@ import UniformTypeIdentifiers
 @MainActor
 class ServiceManager: ObservableObject {
     @Published var services: [ServiceRuntime] = []
-    @Published var importMessage: String?
-    @Published var showImportAlert = false
 
-    init() {
+    private weak var alertQueue: AlertQueue?
+
+    init(alertQueue: AlertQueue? = nil) {
+        self.alertQueue = alertQueue
         loadServices()
     }
 
     func loadServices() {
-        // Load from UserDefaults
-        if let data = UserDefaults.standard.data(forKey: "services"),
-           let decoded = try? JSONDecoder().decode([ServiceConfig].self, from: data) {
-            services = decoded.map { ServiceRuntime(config: $0) }
+        if let configs: [ServiceConfig] = StorageManager.shared.load(forKey: "services") {
+            services = configs.map { ServiceRuntime(config: $0) }
         } else {
-            // Start with empty service list
             services = []
         }
     }
 
     func saveServices() {
         let configs = services.map { $0.config }
-        if let encoded = try? JSONEncoder().encode(configs) {
-            UserDefaults.standard.set(encoded, forKey: "services")
-        }
+        StorageManager.shared.save(configs, forKey: "services")
     }
 
     func addService(_ config: ServiceConfig) {
@@ -73,69 +69,58 @@ class ServiceManager: ObservableObject {
 
     func exportServices() {
         let configs = services.map { $0.config }
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-        guard let jsonData = try? encoder.encode(configs),
-              let jsonString = String(data: jsonData, encoding: .utf8) else {
-            return
-        }
-
-        let savePanel = NSSavePanel()
-        savePanel.allowedContentTypes = [.json]
-        savePanel.nameFieldStringValue = "services.json"
-        savePanel.title = "Export Services"
-
-        savePanel.begin { response in
-            if response == .OK, let url = savePanel.url {
-                try? jsonString.write(to: url, atomically: true, encoding: .utf8)
-            }
-        }
+        ImportExportManager.shared.exportJSON(
+            configs,
+            defaultFileName: "services.json",
+            title: "Export Services"
+        )
     }
 
     func importServices() {
-        let openPanel = NSOpenPanel()
-        openPanel.allowedContentTypes = [.json]
-        openPanel.allowsMultipleSelection = false
-        openPanel.title = "Import Services"
+        ImportExportManager.shared.importJSON(
+            ServiceConfig.self,
+            title: "Import Services"
+        ) { [weak self] result in
+            guard let self = self else { return }
 
-        openPanel.begin { response in
-            if response == .OK, let url = openPanel.url,
-               let jsonData = try? Data(contentsOf: url),
-               let decoded = try? JSONDecoder().decode([ServiceConfig].self, from: jsonData) {
-
+            switch result {
+            case .success(let configs):
                 var newCount = 0
                 var updatedCount = 0
 
                 // Import services - replace if name exists, add if new
-                for config in decoded {
-                    // Check if service with same name exists
+                for config in configs {
                     if let index = self.services.firstIndex(where: { $0.config.name == config.name }) {
-                        // Replace existing service with same name
-                        let newRuntime = ServiceRuntime(config: config)
-                        self.services[index] = newRuntime
+                        // Replace existing service
+                        self.services[index] = ServiceRuntime(config: config)
                         updatedCount += 1
                     } else {
                         // Add new service
-                        let runtime = ServiceRuntime(config: config)
-                        self.services.append(runtime)
+                        self.services.append(ServiceRuntime(config: config))
                         newCount += 1
                     }
                 }
                 self.saveServices()
 
-                // Show confirmation
-                DispatchQueue.main.async {
-                    if newCount > 0 && updatedCount > 0 {
-                        self.importMessage = "Imported \(newCount) new service(s) and updated \(updatedCount) existing service(s)."
-                    } else if newCount > 0 {
-                        self.importMessage = "Imported \(newCount) new service(s)."
-                    } else if updatedCount > 0 {
-                        self.importMessage = "Updated \(updatedCount) existing service(s)."
-                    } else {
-                        self.importMessage = "No services imported."
-                    }
-                    self.showImportAlert = true
+                // Show success message
+                let message: String
+                if newCount > 0 && updatedCount > 0 {
+                    message = "Imported \(newCount) new service(s) and updated \(updatedCount) existing service(s)."
+                } else if newCount > 0 {
+                    message = "Imported \(newCount) new service(s)."
+                } else if updatedCount > 0 {
+                    message = "Updated \(updatedCount) existing service(s)."
+                } else {
+                    message = "No services imported."
                 }
+                self.alertQueue?.enqueue(title: "Import Complete", message: message)
+
+            case .failure(let error):
+                // Only show error alerts, not cancellation
+                if case .userCancelled = error {
+                    return
+                }
+                self.alertQueue?.enqueue(title: "Import Failed", message: error.localizedDescription)
             }
         }
     }

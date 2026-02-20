@@ -1,0 +1,87 @@
+[
+  {
+    "awsProfile" : "lucy-saas",
+    "id" : "DA3488C3-AE8B-4D43-B2E3-EEB99CBDDF83",
+    "instances" : [
+      {
+        "id" : "5711180C-4BE7-4A90-9160-9493D4672B1E",
+        "instanceId" : "i-0edf0988b5fb37d0e",
+        "lastFetched" : 793297869.774795,
+        "lastKnownIP" : "13.229.103.4",
+        "name" : "Web 1"
+      },
+      {
+        "id" : "3CDC71B4-3121-4644-AA00-2F9FC09328E7",
+        "instanceId" : "i-09881dd5fc0add898",
+        "lastFetched" : 793297633.343359,
+        "lastKnownIP" : "54.169.178.176",
+        "name" : "Web 2"
+      },
+      {
+        "id" : "4A98763F-1DBC-4848-A640-7F267D50E038",
+        "instanceId" : "i-0314f5ee633b387aa",
+        "lastFetched" : 793295933.022344,
+        "lastKnownIP" : "122.248.216.39",
+        "name" : "Worker"
+      }
+    ],
+    "name" : "Lucy",
+    "region" : "ap-southeast-1"
+  },
+  {
+    "awsProfile" : "lucy-saas",
+    "id" : "B303627A-5649-4058-A5C5-32C2703E49C3",
+    "instances" : [
+      {
+        "id" : "BB89F05A-1F02-49DA-9E46-B4F4C8146EE4",
+        "instanceId" : "i-09eee6ce3517cbf37",
+        "name" : "Web"
+      },
+      {
+        "id" : "3B605744-183E-4C01-A153-54D73FD1F1C3",
+        "instanceId" : "i-091a50f0fd4710385",
+        "name" : "Worker"
+      },
+      {
+        "id" : "13413231-5609-45C5-8B62-5B38C160052F",
+        "instanceId" : "i-0c4619bfbc09067c6",
+        "name" : "DB"
+      },
+      {
+        "id" : "5F11A46A-8A72-4FB1-A3FB-5AD250837A06",
+        "instanceId" : "i-0cf272c5285040864",
+        "name" : "Data Store"
+      }
+    ],
+    "name" : "Sydney",
+    "region" : "ap-southeast-2"
+  },
+  {
+    "awsProfile" : "lucy-saas",
+    "id" : "A9F9DF26-CC44-4C84-8A4B-AC92828EFBB5",
+    "instances" : [
+      {
+        "id" : "671348F7-B073-4896-AE19-89E1ECA2B525",
+        "instanceId" : "i-049df269560b96012",
+        "name" : "Web 1"
+      },
+      {
+        "id" : "A947AB91-ECF6-4C0D-AEFB-6779BD6B3B4E",
+        "instanceId" : "i-0bfc23ce6ea6070fa",
+        "name" : "Web 2"
+      },
+      {
+        "id" : "68F8307E-560A-483E-8C65-9715DF5A964A",
+        "instanceId" : "i-08e462a4548874297",
+        "name" : "Worker"
+      },
+      {
+        "id" : "9F0875B3-F6ED-4C8C-B3F3-2234647208E9",
+        "instanceId" : "i-02ac691d49e45fe31",
+        "name" : "DB"
+      }
+    ],
+    "name" : "Canvas",
+    "region" : "ap-southeast-1"
+  }
+]

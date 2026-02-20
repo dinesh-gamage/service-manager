@@ -30,7 +30,8 @@ struct ServiceManagerModule: DevDashModule {
 class ServiceManagerState: ObservableObject {
     static let shared = ServiceManagerState()
 
-    @Published var manager = ServiceManager()
+    let alertQueue = AlertQueue()
+    @Published var manager: ServiceManager
     @Published var selectedService: ServiceRuntime?
     @Published var showingAddService = false
     @Published var showingEditService = false
@@ -39,7 +40,9 @@ class ServiceManagerState: ObservableObject {
     @Published var serviceToDelete: ServiceRuntime?
     @Published var showingDeleteConfirmation = false
 
-    private init() {}
+    private init() {
+        self.manager = ServiceManager(alertQueue: alertQueue)
+    }
 }
 
 // MARK: - Sidebar View
@@ -107,13 +110,7 @@ struct ServiceManagerSidebarView: View {
         .sheet(isPresented: $state.showingJSONEditor) {
             JSONEditorView(manager: state.manager)
         }
-        .alert("Import Complete", isPresented: $state.manager.showImportAlert) {
-            Button("OK", role: .cancel) { }
-        } message: {
-            if let message = state.manager.importMessage {
-                Text(message)
-            }
-        }
+        .alertQueue(state.alertQueue)
         .alert("Delete Service", isPresented: $state.showingDeleteConfirmation) {
             Button("Cancel", role: .cancel) {
                 state.serviceToDelete = nil

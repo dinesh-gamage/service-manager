@@ -14,28 +14,20 @@ import UniformTypeIdentifiers
 class InstanceGroupManager: ObservableObject {
     @Published var groups: [InstanceGroup] = []
     @Published var isFetching: [UUID: Bool] = [:]
-    @Published var importMessage: String?
-    @Published var showImportAlert = false
 
-    init() {
+    private weak var alertQueue: AlertQueue?
+
+    init(alertQueue: AlertQueue? = nil) {
+        self.alertQueue = alertQueue
         loadGroups()
     }
 
     func loadGroups() {
-        if let data = UserDefaults.standard.data(forKey: "instanceGroups"),
-           let decoded = try? JSONDecoder().decode([InstanceGroup].self, from: data) {
-            groups = decoded
-        } else {
-            // Initialize with default groups from scripts
-            groups = createDefaultGroups()
-            saveGroups()
-        }
+        groups = StorageManager.shared.load(forKey: "instanceGroups") ?? []
     }
 
     func saveGroups() {
-        if let encoded = try? JSONEncoder().encode(groups) {
-            UserDefaults.standard.set(encoded, forKey: "instanceGroups")
-        }
+        StorageManager.shared.save(groups, forKey: "instanceGroups")
     }
 
     func updateInstance(_ groupId: UUID, instanceId: UUID, ip: String?, fetchedDate: Date, error: String?) {
@@ -156,44 +148,29 @@ class InstanceGroupManager: ObservableObject {
     // MARK: - Import/Export
 
     func exportGroups() {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-        guard let jsonData = try? encoder.encode(groups),
-              let jsonString = String(data: jsonData, encoding: .utf8) else {
-            return
-        }
-
-        let savePanel = NSSavePanel()
-        savePanel.allowedContentTypes = [.json]
-        savePanel.nameFieldStringValue = "ec2-groups.json"
-        savePanel.title = "Export EC2 Groups"
-
-        savePanel.begin { response in
-            if response == .OK, let url = savePanel.url {
-                try? jsonString.write(to: url, atomically: true, encoding: .utf8)
-            }
-        }
+        ImportExportManager.shared.exportJSON(
+            groups,
+            defaultFileName: "ec2-groups.json",
+            title: "Export EC2 Groups"
+        )
     }
 
     func importGroups() {
-        let openPanel = NSOpenPanel()
-        openPanel.allowedContentTypes = [.json]
-        openPanel.allowsMultipleSelection = false
-        openPanel.title = "Import EC2 Groups"
+        ImportExportManager.shared.importJSON(
+            InstanceGroup.self,
+            title: "Import EC2 Groups"
+        ) { [weak self] result in
+            guard let self = self else { return }
 
-        openPanel.begin { response in
-            if response == .OK, let url = openPanel.url,
-               let jsonData = try? Data(contentsOf: url),
-               let decoded = try? JSONDecoder().decode([InstanceGroup].self, from: jsonData) {
-
+            switch result {
+            case .success(let importedGroups):
                 var newCount = 0
                 var updatedCount = 0
 
                 // Import groups - replace if name exists, add if new
-                for group in decoded {
-                    // Check if group with same name exists
+                for group in importedGroups {
                     if let index = self.groups.firstIndex(where: { $0.name == group.name }) {
-                        // Replace existing group with same name
+                        // Replace existing group
                         self.groups[index] = group
                         updatedCount += 1
                     } else {
@@ -204,57 +181,26 @@ class InstanceGroupManager: ObservableObject {
                 }
                 self.saveGroups()
 
-                // Show confirmation
-                DispatchQueue.main.async {
-                    if newCount > 0 && updatedCount > 0 {
-                        self.importMessage = "Imported \(newCount) new group(s) and updated \(updatedCount) existing group(s)."
-                    } else if newCount > 0 {
-                        self.importMessage = "Imported \(newCount) new group(s)."
-                    } else if updatedCount > 0 {
-                        self.importMessage = "Updated \(updatedCount) existing group(s)."
-                    } else {
-                        self.importMessage = "No changes made."
-                    }
-                    self.showImportAlert = true
+                // Show success message
+                let message: String
+                if newCount > 0 && updatedCount > 0 {
+                    message = "Imported \(newCount) new group(s) and updated \(updatedCount) existing group(s)."
+                } else if newCount > 0 {
+                    message = "Imported \(newCount) new group(s)."
+                } else if updatedCount > 0 {
+                    message = "Updated \(updatedCount) existing group(s)."
+                } else {
+                    message = "No changes made."
                 }
+                self.alertQueue?.enqueue(title: "Import Complete", message: message)
+
+            case .failure(let error):
+                // Only show error alerts, not cancellation
+                if case .userCancelled = error {
+                    return
+                }
+                self.alertQueue?.enqueue(title: "Import Failed", message: error.localizedDescription)
             }
         }
-    }
-
-    private func createDefaultGroups() -> [InstanceGroup] {
-        [
-            InstanceGroup(
-                name: "Lucy",
-                region: "ap-southeast-1",
-                awsProfile: "lucy-saas",
-                instances: [
-                    EC2Instance(name: "Web 1", instanceId: "i-0edf0988b5fb37d0e"),
-                    EC2Instance(name: "Web 2", instanceId: "i-09881dd5fc0add898"),
-                    EC2Instance(name: "Worker", instanceId: "i-0314f5ee633b387aa")
-                ]
-            ),
-            InstanceGroup(
-                name: "Sydney",
-                region: "ap-southeast-2",
-                awsProfile: "lucy-saas",
-                instances: [
-                    EC2Instance(name: "Web", instanceId: "i-09eee6ce3517cbf37"),
-                    EC2Instance(name: "Worker", instanceId: "i-091a50f0fd4710385"),
-                    EC2Instance(name: "DB", instanceId: "i-0c4619bfbc09067c6"),
-                    EC2Instance(name: "Data Store", instanceId: "i-0cf272c5285040864")
-                ]
-            ),
-            InstanceGroup(
-                name: "Canvas",
-                region: "ap-southeast-1",
-                awsProfile: "lucy-saas",
-                instances: [
-                    EC2Instance(name: "Web 1", instanceId: "i-049df269560b96012"),
-                    EC2Instance(name: "Web 2", instanceId: "i-0bfc23ce6ea6070fa"),
-                    EC2Instance(name: "Worker", instanceId: "i-08e462a4548874297"),
-                    EC2Instance(name: "DB", instanceId: "i-02ac691d49e45fe31")
-                ]
-            )
-        ]
     }
 }

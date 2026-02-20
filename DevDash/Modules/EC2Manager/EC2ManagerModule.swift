@@ -30,7 +30,8 @@ struct EC2ManagerModule: DevDashModule {
 class EC2ManagerState: ObservableObject {
     static let shared = EC2ManagerState()
 
-    @Published var manager = InstanceGroupManager()
+    let alertQueue = AlertQueue()
+    @Published var manager: InstanceGroupManager
     @Published var selectedGroup: InstanceGroup?
 
     // Group management
@@ -49,7 +50,9 @@ class EC2ManagerState: ObservableObject {
     @Published var instanceToDelete: EC2Instance?
     @Published var showingDeleteInstanceConfirmation = false
 
-    private init() {}
+    private init() {
+        self.manager = InstanceGroupManager(alertQueue: alertQueue)
+    }
 }
 
 // MARK: - Sidebar View
@@ -116,13 +119,7 @@ struct EC2ManagerSidebarView: View {
         .sheet(isPresented: $state.showingJSONEditor) {
             InstanceGroupJSONEditorView(manager: state.manager)
         }
-        .alert("Import Complete", isPresented: $state.manager.showImportAlert) {
-            Button("OK", role: .cancel) { }
-        } message: {
-            if let message = state.manager.importMessage {
-                Text(message)
-            }
-        }
+        .alertQueue(state.alertQueue)
         .alert("Delete Group", isPresented: $state.showingDeleteGroupConfirmation) {
             Button("Cancel", role: .cancel) {
                 state.groupToDelete = nil
