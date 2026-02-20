@@ -52,14 +52,25 @@ struct InstanceGroupDetailView: View {
                 .width(min: 150, ideal: 180, max: 250)
 
                 TableColumn("Last Known IP") { instance in
-                    if let ip = instance.lastKnownIP {
+                    if let error = instance.fetchError {
+                        HStack(spacing: 6) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.caption)
+                                .foregroundColor(.orange)
+                            Text(error)
+                                .font(.caption)
+                                .foregroundColor(.orange)
+                                .lineLimit(1)
+                                .help(error)
+                        }
+                    } else if let ip = instance.lastKnownIP {
                         InlineCopyableText(ip, monospaced: true)
                     } else {
                         Text("—")
                             .foregroundColor(.secondary)
                     }
                 }
-                .width(min: 120, ideal: 150, max: 200)
+                .width(min: 120, ideal: 200, max: 300)
 
                 TableColumn("Last Fetched") { instance in
                     if let date = instance.lastFetched {

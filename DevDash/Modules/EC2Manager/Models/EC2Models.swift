@@ -15,13 +15,15 @@ struct EC2Instance: Codable, Identifiable, Hashable {
     var instanceId: String
     var lastKnownIP: String?
     var lastFetched: Date?
+    var fetchError: String?
 
-    init(id: UUID = UUID(), name: String, instanceId: String, lastKnownIP: String? = nil, lastFetched: Date? = nil) {
+    init(id: UUID = UUID(), name: String, instanceId: String, lastKnownIP: String? = nil, lastFetched: Date? = nil, fetchError: String? = nil) {
         self.id = id
         self.name = name
         self.instanceId = instanceId
         self.lastKnownIP = lastKnownIP
         self.lastFetched = lastFetched
+        self.fetchError = fetchError
     }
 }
 

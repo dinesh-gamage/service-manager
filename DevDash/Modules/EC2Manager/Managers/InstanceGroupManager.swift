@@ -38,11 +38,12 @@ class InstanceGroupManager: ObservableObject {
         }
     }
 
-    func updateInstance(_ groupId: UUID, instanceId: UUID, ip: String, fetchedDate: Date) {
+    func updateInstance(_ groupId: UUID, instanceId: UUID, ip: String?, fetchedDate: Date, error: String?) {
         if let groupIndex = groups.firstIndex(where: { $0.id == groupId }),
            let instanceIndex = groups[groupIndex].instances.firstIndex(where: { $0.id == instanceId }) {
             groups[groupIndex].instances[instanceIndex].lastKnownIP = ip
             groups[groupIndex].instances[instanceIndex].lastFetched = fetchedDate
+            groups[groupIndex].instances[instanceIndex].fetchError = error
             saveGroups()
         }
     }
@@ -55,31 +56,54 @@ class InstanceGroupManager: ObservableObject {
 
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-            process.arguments = ["-c", command]
+            process.arguments = ["-l", "-c", command] // -l flag loads user's profile
 
-            let pipe = Pipe()
-            process.standardOutput = pipe
-            process.standardError = pipe
+            // Set environment to include common binary paths
+            var environment = ProcessInfo.processInfo.environment
+            let extraPaths = ["/usr/local/bin", "/opt/homebrew/bin", "/usr/bin", "/bin"]
+            if let existingPath = environment["PATH"] {
+                environment["PATH"] = extraPaths.joined(separator: ":") + ":" + existingPath
+            } else {
+                environment["PATH"] = extraPaths.joined(separator: ":")
+            }
+            process.environment = environment
+
+            let outputPipe = Pipe()
+            let errorPipe = Pipe()
+            process.standardOutput = outputPipe
+            process.standardError = errorPipe
 
             do {
                 try process.run()
                 process.waitUntilExit()
 
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                if let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
-                   !output.isEmpty,
-                   output != "None" {
-                    await MainActor.run {
-                        self.updateInstance(group.id, instanceId: instance.id, ip: output, fetchedDate: Date())
-                        self.isFetching[instance.id] = false
+                let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
+                let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+
+                let output = String(data: outputData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let errorOutput = String(data: errorData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+                let exitCode = process.terminationStatus
+
+                await MainActor.run {
+                    if exitCode == 0 && !output.isEmpty && output != "None" {
+                        // Success - got valid IP
+                        self.updateInstance(group.id, instanceId: instance.id, ip: output, fetchedDate: Date(), error: nil)
+                    } else if !errorOutput.isEmpty {
+                        // Error occurred
+                        self.updateInstance(group.id, instanceId: instance.id, ip: nil, fetchedDate: Date(), error: errorOutput)
+                    } else if output == "None" || output.isEmpty {
+                        // No IP available but command succeeded
+                        self.updateInstance(group.id, instanceId: instance.id, ip: nil, fetchedDate: Date(), error: "No public IP assigned")
+                    } else {
+                        // Unknown error
+                        self.updateInstance(group.id, instanceId: instance.id, ip: nil, fetchedDate: Date(), error: "Failed to fetch IP")
                     }
-                } else {
-                    await MainActor.run {
-                        self.isFetching[instance.id] = false
-                    }
+                    self.isFetching[instance.id] = false
                 }
             } catch {
                 await MainActor.run {
+                    self.updateInstance(group.id, instanceId: instance.id, ip: nil, fetchedDate: Date(), error: "Process error: \(error.localizedDescription)")
                     self.isFetching[instance.id] = false
                 }
             }

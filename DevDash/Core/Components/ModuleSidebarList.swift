@@ -129,8 +129,8 @@ struct ModuleSidebarListItem: View {
                 badge
             }
 
-            // Action buttons
-            if !actions.isEmpty {
+            // Action buttons (only render when hovering)
+            if !actions.isEmpty && isHovering {
                 HStack(spacing: AppTheme.actionButtonSpacing) {
                     ForEach(actions.indices, id: \.self) { index in
                         VariantButton(
@@ -141,8 +141,6 @@ struct ModuleSidebarListItem: View {
                         )
                     }
                 }
-                .opacity(isHovering ? 1 : 0)
-                .allowsHitTesting(isHovering)
             }
         }
         .padding(.vertical, AppTheme.itemVerticalPadding)

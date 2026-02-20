@@ -84,7 +84,7 @@ struct EC2ManagerSidebarView: View {
             ),
             selectedItem: $state.selectedGroup
         ) { group, isSelected in
-            let recentCount = group.instances.filter { $0.lastKnownIP != nil }.count
+            let recentCount = group.instances.filter { $0.lastKnownIP != nil && $0.fetchError == nil }.count
 
             return ModuleSidebarListItem(
                 icon: .none,
