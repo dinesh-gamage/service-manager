@@ -23,57 +23,40 @@ struct ServiceDetailView: View {
                 HStack {
                     if service.isRunning {
                         if service.isExternallyManaged {
-                            Text("Running outside DevDash")
-                                .font(.caption)
-                                .foregroundColor(.orange)
+                            Badge("Running outside DevDash", icon: "exclamationmark.triangle", variant: .warning)
                         }
 
-                        Button("Stop") {
+                        VariantButton("Stop", variant: .danger) {
                             service.stop()
                         }
-                        .buttonStyle(.borderedProminent)
-                        .tint(.red)
 
-                        Button("Restart") {
+                        VariantButton("Restart", variant: .warning) {
                             service.restart()
                         }
-                        .buttonStyle(.borderedProminent)
-                        .tint(.orange)
 
                         if service.isExternallyManaged {
-                            Button("Kill & Start") {
+                            VariantButton("Kill & Start", variant: .danger) {
                                 service.stop()
                                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                                     service.start()
                                 }
                             }
-                            .buttonStyle(.borderedProminent)
-                            .tint(.purple)
                         }
                     } else if service.hasPortConflict {
-                        Text("Port \(service.config.port ?? 0) in use (PID: \(service.conflictingPID ?? 0))")
-                            .font(.caption)
-                            .foregroundColor(.orange)
+                        Badge("Port \(service.config.port ?? 0) in use (PID: \(service.conflictingPID ?? 0))", icon: "exclamationmark.triangle", variant: .warning)
 
-                        Button("Kill & Restart") {
+                        VariantButton("Kill & Restart", variant: .danger) {
                             service.killAndRestart()
                         }
-                        .buttonStyle(.borderedProminent)
-                        .tint(.red)
                     } else {
-                        Button("Start") {
+                        VariantButton("Start", icon: "play.fill", variant: .primary) {
                             service.start()
                         }
-                        .buttonStyle(.borderedProminent)
                     }
 
-                    Button {
+                    VariantButton(icon: "arrow.clockwise", variant: .secondary, tooltip: "Check service status") {
                         Task { await service.checkStatus() }
-                    } label: {
-                        Image(systemName: "arrow.clockwise")
                     }
-                    .buttonStyle(.borderless)
-                    .help("Check service status")
 
                     Spacer()
 
@@ -81,28 +64,17 @@ struct ServiceDetailView: View {
                     if !service.errors.isEmpty {
                         HStack(spacing: 6) {
                             Button(action: { showingErrors = true; showingWarnings = false }) {
-                                HStack(spacing: 4) {
-                                    Text("❌")
-                                    Text("\(service.errors.count)")
-                                        .font(.caption)
-                                        .fontWeight(.semibold)
-                                }
+                                Badge("\(service.errors.count)", icon: "xmark.circle", variant: .danger)
                             }
                             .buttonStyle(.plain)
 
                             Divider()
                                 .frame(height: 12)
 
-                            Button(action: {
+                            VariantButton(icon: "xmark.circle.fill", variant: .danger, tooltip: "Clear all errors") {
                                 service.clearErrors()
                                 showingErrors = false
-                            }) {
-                                Image(systemName: "xmark.circle.fill")
-                                    .font(.body)
-                                    .foregroundColor(.red.opacity(0.7))
                             }
-                            .buttonStyle(.plain)
-                            .help("Clear all errors")
                         }
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
@@ -113,28 +85,17 @@ struct ServiceDetailView: View {
                     if !service.warnings.isEmpty {
                         HStack(spacing: 6) {
                             Button(action: { showingWarnings = true; showingErrors = false }) {
-                                HStack(spacing: 4) {
-                                    Text("⚠️")
-                                    Text("\(service.warnings.count)")
-                                        .font(.caption)
-                                        .fontWeight(.semibold)
-                                }
+                                Badge("\(service.warnings.count)", icon: "exclamationmark.triangle", variant: .warning)
                             }
                             .buttonStyle(.plain)
 
                             Divider()
                                 .frame(height: 12)
 
-                            Button(action: {
+                            VariantButton(icon: "xmark.circle.fill", variant: .warning, tooltip: "Clear all warnings") {
                                 service.clearWarnings()
                                 showingWarnings = false
-                            }) {
-                                Image(systemName: "xmark.circle.fill")
-                                    .font(.body)
-                                    .foregroundColor(.orange.opacity(0.7))
                             }
-                            .buttonStyle(.plain)
-                            .help("Clear all warnings")
                         }
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)

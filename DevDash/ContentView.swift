@@ -11,7 +11,6 @@ struct ContentView: View {
     @ObservedObject var registry = ModuleRegistry.shared
     @State private var selectedModuleId: String?
     @State private var showingModuleList = true
-    @State private var isBackButtonHovered = false
 
     var selectedModule: (any DevDashModule)? {
         guard let id = selectedModuleId else { return nil }
@@ -23,54 +22,41 @@ struct ContentView: View {
             // Single unified sidebar
             VStack(spacing: 0) {
                 // Persistent header - always visible
-                VStack(spacing: 6) {
-                    HStack(spacing: 12) {
-                        // Back button (only visible when in module view)
-                        if !showingModuleList {
-                            Button(action: {
-                                withAnimation {
-                                    showingModuleList = true
-                                    selectedModuleId = nil
-                                }
-                            }) {
-                                Image(systemName: "chevron.left")
-                                    .font(.system(size: 18, weight: .semibold))
-                                    .foregroundColor(.accentColor)
-                                    .frame(width: 32, height: 32)
-                                    .background(
-                                        Circle()
-                                            .fill(isBackButtonHovered ? Color.accentColor.opacity(0.12) : AppTheme.clearColor)
-                                    )
-                            }
-                            .buttonStyle(.plain)
-                            .help("Back to Modules")
-                            .onHover { hovering in
-                                isBackButtonHovered = hovering
+                HStack(spacing: 12) {
+                    // Back button (only visible when in module view)
+                    if !showingModuleList {
+                        VariantButton(icon: "chevron.left", variant: .primary, tooltip: "Back to Modules") {
+                            withAnimation {
+                                showingModuleList = true
+                                selectedModuleId = nil
                             }
                         }
-
-                        // DevDash logo
-                        Image(systemName: "square.grid.2x2.fill")
-                            .font(.title3)
-                            .foregroundStyle(.linearGradient(
-                                colors: [.blue, .purple],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ))
-
-                        Text("DevDash")
-                            .font(AppTheme.h1)
-
-                        Spacer()
                     }
-                    .padding(.horizontal, 16)
 
-                    Text("Developer Dashboard")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 16)
+                    // Logo, title, and subtitle grouped together
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 12) {
+                            // DevDash logo
+                            Image(systemName: "square.grid.2x2.fill")
+                                .font(.title3)
+                                .foregroundStyle(.linearGradient(
+                                    colors: [.blue, .purple],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                ))
+
+                            Text("DevDash")
+                                .font(AppTheme.h1)
+                        }
+
+                        Text("Developer Dashboard")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+
+                    Spacer()
                 }
+                .padding(.horizontal, 16)
                 .padding(.vertical, 12)
                 .background(
                     LinearGradient(

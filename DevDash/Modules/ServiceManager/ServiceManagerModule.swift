@@ -42,117 +42,59 @@ class ServiceManagerState: ObservableObject {
     private init() {}
 }
 
-// MARK: - Toolbar Button Helper
-
-struct ToolbarButton: View {
-    let icon: String
-    let help: String
-    let action: () -> Void
-
-    @State private var isHovered = false
-    @ObservedObject var accentColor = AppTheme.AccentColor.shared
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: 14))
-                .foregroundColor(accentColor.current)
-                .frame(width: 26, height: 26)
-                .background(
-                    Circle()
-                        .fill(isHovered ? accentColor.current.opacity(0.12) : AppTheme.clearColor)
-                )
-        }
-        .buttonStyle(.plain)
-        .help(help)
-        .onHover { hovering in
-            isHovered = hovering
-        }
-    }
-}
-
 // MARK: - Sidebar View
 
 struct ServiceManagerSidebarView: View {
     @ObservedObject var state = ServiceManagerState.shared
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Toolbar
-            HStack(spacing: 12) {
-                // Direct action buttons (left aligned)
-                ToolbarButton(icon: "plus.circle", help: "Add Service") {
+        ModuleSidebarList(
+            toolbarButtons: [
+                ToolbarButtonConfig(icon: "plus.circle", help: "Add Service") {
                     state.showingAddService = true
-                }
-
-                ToolbarButton(icon: "square.and.arrow.down", help: "Import Services") {
+                },
+                ToolbarButtonConfig(icon: "square.and.arrow.down", help: "Import Services") {
                     state.manager.importServices()
-                }
-
-                ToolbarButton(icon: "square.and.arrow.up", help: "Export Services") {
+                },
+                ToolbarButtonConfig(icon: "square.and.arrow.up", help: "Export Services") {
                     state.manager.exportServices()
-                }
-
-                ToolbarButton(icon: "curlybraces", help: "Edit JSON") {
+                },
+                ToolbarButtonConfig(icon: "curlybraces", help: "Edit JSON") {
                     state.showingJSONEditor = true
-                }
-
-                ToolbarButton(icon: "arrow.clockwise", help: "Refresh All") {
+                },
+                ToolbarButtonConfig(icon: "arrow.clockwise", help: "Refresh All") {
                     state.manager.checkAllServices()
                 }
-
-                Spacer()
-            }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 6)
-            .background(AppTheme.toolbarBackground)
-
-            Divider()
-
-            // Service list
-            if state.manager.services.isEmpty {
-                VStack(spacing: 12) {
-                    Image(systemName: "gearshape.2")
-                        .font(.system(size: 48))
-                        .foregroundColor(.secondary)
-
-                    Text("No Services")
-                        .font(.headline)
-                        .foregroundColor(.secondary)
-
-                    Text("Add a service to get started")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-
-                    Button(action: { state.showingAddService = true }) {
-                        Label("Add Service", systemImage: "plus")
+            ],
+            items: state.manager.services,
+            emptyState: EmptyStateConfig(
+                icon: "gearshape.2",
+                title: "No Services",
+                subtitle: "Add a service to get started",
+                buttonText: "Add Service",
+                buttonIcon: "plus",
+                buttonAction: { state.showingAddService = true }
+            ),
+            selectedItem: $state.selectedService
+        ) { service, isSelected in
+            ModuleSidebarListItem(
+                icon: .status(color: service.isRunning ? AppTheme.statusRunning : AppTheme.statusStopped),
+                title: service.config.name,
+                subtitle: nil,
+                badge: nil,
+                actions: [
+                    ListItemAction(icon: "pencil", variant: .primary, tooltip: "Edit") {
+                        state.serviceToEdit = service
+                        state.showingEditService = true
+                    },
+                    ListItemAction(icon: "trash", variant: .danger, tooltip: "Delete") {
+                        state.serviceToDelete = service
+                        state.showingDeleteConfirmation = true
                     }
-                    .buttonStyle(.borderedProminent)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                List {
-                    ForEach(state.manager.services) { service in
-                        ServiceListItem(
-                            service: service,
-                            isSelected: state.selectedService == service,
-                            onDelete: {
-                                state.serviceToDelete = service
-                                state.showingDeleteConfirmation = true
-                            },
-                            onEdit: {
-                                state.serviceToEdit = service
-                                state.showingEditService = true
-                            }
-                        )
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            state.selectedService = service
-                        }
-                    }
-                }
-                .listStyle(.plain)
-            }
+                ],
+                isSelected: isSelected,
+                onTap: { state.selectedService = service }
+            )
         }
         .sheet(isPresented: $state.showingAddService) {
             AddServiceView(manager: state.manager)

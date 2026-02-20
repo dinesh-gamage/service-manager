@@ -44,14 +44,14 @@ struct AppTheme {
     /// Warning state color (pastel orange)
     static let statusWarning = Color.orange.opacity(0.5)
 
-    /// Success color for actions
-    static let successColor = Color.green
+    /// Success color for actions (semi-transparent)
+    static let successColor = Color.green.opacity(0.7)
 
-    /// Error color for actions
-    static let errorColor = Color.red
+    /// Error color for actions (semi-transparent)
+    static let errorColor = Color.red.opacity(0.7)
 
-    /// Warning color for alerts
-    static let warningColor = Color.orange
+    /// Warning color for alerts (semi-transparent)
+    static let warningColor = Color.orange.opacity(0.7)
 
     // MARK: - Background Colors
 
@@ -76,8 +76,11 @@ struct AppTheme {
     /// Shadow color for elevated elements
     static let shadowColor = Color.black.opacity(0.1)
 
-    /// Badge background (success indicator)
-    static let badgeBackground = Color.green
+    /// Badge background (semi-transparent)
+    static let badgeBackground = Color.green.opacity(0.2)
+
+    /// Badge text color
+    static let badgeTextColor = Color.green.opacity(0.9)
 
     // MARK: - Gradient Colors
 
@@ -124,7 +127,7 @@ struct AppTheme {
     static let actionButtonSize: CGFloat = 12
 
     /// Spacing between action buttons
-    static let actionButtonSpacing: CGFloat = 12
+    static let actionButtonSpacing: CGFloat = 6
 
     // MARK: - Button Interactions
 
