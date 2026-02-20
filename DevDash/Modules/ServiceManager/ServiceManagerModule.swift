@@ -168,6 +168,7 @@ struct ServiceManagerDetailView: View {
     var body: some View {
         if let service = state.selectedService {
             ServiceDetailView(service: service)
+                .id(ObjectIdentifier(service))
         } else {
             VStack(spacing: 16) {
                 Image(systemName: "gearshape.2")
