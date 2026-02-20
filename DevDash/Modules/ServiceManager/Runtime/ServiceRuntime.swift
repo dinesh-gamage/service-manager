@@ -10,7 +10,7 @@ import SwiftUI
 import Combine
 
 @MainActor
-class ServiceRuntime: ObservableObject, Identifiable, Hashable {
+class ServiceRuntime: ObservableObject, Identifiable, Hashable, OutputViewDataSource {
 
     let config: ServiceConfig
 
@@ -35,21 +35,6 @@ class ServiceRuntime: ObservableObject, Identifiable, Hashable {
 
     // Flag set when "EADDRINUSE" is seen in a chunk (avoids full log scan at termination)
     private var seenEADDRINUSE = false
-
-    // Static pattern arrays — allocated once, not per parsed line
-    private static let errorPatterns: [String] = [
-        "error", "err", "fatal", "fail", "failed", "failure",
-        "exception", "panic", "critical", "severe", "cannot",
-        "unable to", "not found", "invalid", "undefined",
-        "traceback", "stacktrace"
-    ]
-    private static let warningPatterns: [String] = [
-        "warning", "warn", "deprecated", "obsolete", "caution",
-        "notice", "should", "recommend", "may cause"
-    ]
-
-    // Pre-compiled regex for stack trace numeric-line detection
-    private static let stackTraceLineRegex = /^\s*\d+\s+/
 
     // Cap on errors/warnings arrays to prevent unbounded memory growth
     private static let maxEntries = 500
@@ -96,7 +81,7 @@ class ServiceRuntime: ObservableObject, Identifiable, Hashable {
                                trimmed.hasPrefix("at ") ||
                                trimmed.contains("(") && trimmed.contains(")") && trimmed.contains(":") ||
                                trimmed.hasPrefix("File ") ||
-                               trimmed.contains(Self.stackTraceLineRegex)
+                               trimmed.contains(LogParser.stackTraceLineRegex)
 
         // If we're collecting a stack trace
         if collectingStackTrace {
@@ -114,7 +99,7 @@ class ServiceRuntime: ObservableObject, Identifiable, Hashable {
         }
 
         // Check for errors
-        for pattern in Self.errorPatterns {
+        for pattern in LogParser.errorPatterns {
             if lowercased.contains(pattern) {
                 let entry = LogEntry(
                     message: trimmed,
@@ -134,7 +119,7 @@ class ServiceRuntime: ObservableObject, Identifiable, Hashable {
         }
 
         // Check for warnings
-        for pattern in Self.warningPatterns {
+        for pattern in LogParser.warningPatterns {
             if lowercased.contains(pattern) {
                 let entry = LogEntry(
                     message: trimmed,

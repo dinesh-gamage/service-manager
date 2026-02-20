@@ -33,6 +33,8 @@ struct ModuleDetailHeader<ActionContent: View, StatusContent: View>: View {
     let statusContent: () -> StatusContent
     let metadata: [MetadataRow]
 
+    @State private var isMetadataExpanded: Bool = false
+
     init(
         title: String,
         metadata: [MetadataRow] = [],
@@ -61,35 +63,59 @@ struct ModuleDetailHeader<ActionContent: View, StatusContent: View>: View {
                 statusContent()
             }
 
-            // Metadata rows
+            // Metadata rows (collapsible)
             if !metadata.isEmpty {
                 Divider()
 
-                VStack(alignment: .leading, spacing: 4) {
-                    ForEach(metadata.indices, id: \.self) { index in
-                        let row = metadata[index]
+                // Collapse/Expand button
+                Button(action: {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        isMetadataExpanded.toggle()
+                    }
+                }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: isMetadataExpanded ? "chevron.down" : "chevron.right")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text("Details")
+                            .font(AppTheme.h3)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .buttonStyle(.plain)
 
-                        if let value = row.value {
-                            if row.copyable {
-                                HStack(spacing: 8) {
-                                    Image(systemName: row.icon)
+                if isMetadataExpanded {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(metadata.indices, id: \.self) { index in
+                            let row = metadata[index]
+
+                            if let value = row.value {
+                                if row.copyable {
+                                    HStack(spacing: 8) {
+                                        Image(systemName: row.icon)
+                                            .foregroundColor(.secondary)
+                                            .frame(width: 16)
+
+                                        InlineCopyableText(value, monospaced: row.monospaced)
+                                    }
+                                    .font(.caption)
+                                    .frame(minHeight: 25, alignment: .leading)
+                                } else {
+                                    Label("\(row.label): \(value)", systemImage: row.icon)
+                                        .font(.caption)
                                         .foregroundColor(.secondary)
-                                        .frame(width: 16)
-
-                                    InlineCopyableText(value, monospaced: row.monospaced)
+                                        .frame(minHeight: 25, alignment: .leading)
                                 }
-                                .font(.caption)
                             } else {
-                                Label("\(row.label): \(value)", systemImage: row.icon)
+                                Label(row.label, systemImage: row.icon)
                                     .font(.caption)
                                     .foregroundColor(.secondary)
+                                    .frame(minHeight: 25, alignment: .leading)
                             }
-                        } else {
-                            Label(row.label, systemImage: row.icon)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
                         }
                     }
+                    .padding(.top, 4)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
                 }
             }
         }

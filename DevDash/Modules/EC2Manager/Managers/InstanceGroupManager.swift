@@ -14,6 +14,7 @@ import UniformTypeIdentifiers
 class InstanceGroupManager: ObservableObject {
     @Published var groups: [InstanceGroup] = []
     @Published var isFetching: [UUID: Bool] = [:]
+    @Published var instanceOutputs: [UUID: CommandOutputViewModel] = [:]
 
     private weak var alertQueue: AlertQueue?
 
@@ -50,6 +51,12 @@ class InstanceGroupManager: ObservableObject {
 
         isFetching[instance.id] = true
 
+        // Create or get output view model for this instance
+        let outputViewModel = instanceOutputs[instance.id] ?? CommandOutputViewModel()
+        if instanceOutputs[instance.id] == nil {
+            instanceOutputs[instance.id] = outputViewModel
+        }
+
         Task.detached(priority: .userInitiated) {
             let command = "aws-vault exec \(group.awsProfile) -- aws ec2 describe-instances --instance-ids \(instance.instanceId) --region \(group.region) --query 'Reservations[0].Instances[0].PublicIpAddress' --output text"
 
@@ -75,7 +82,20 @@ class InstanceGroupManager: ObservableObject {
 
                 let exitCode = process.terminationStatus
 
+                // Build full output log
+                var fullLog = "[Command] \(command)\n\n"
+                fullLog += "[Exit Code] \(exitCode)\n\n"
+                if !output.isEmpty {
+                    fullLog += "[STDOUT]\n\(output)\n\n"
+                }
+                if !errorOutput.isEmpty {
+                    fullLog += "[STDERR]\n\(errorOutput)\n"
+                }
+
                 await MainActor.run {
+                    // Update output view model with full log
+                    outputViewModel.setLogs(fullLog)
+
                     if exitCode == 0 && !output.isEmpty && output != "None" {
                         // Success - got valid IP
                         self.updateInstance(group.id, instanceId: instance.id, ip: output, fetchedDate: Date(), error: nil)
@@ -92,7 +112,9 @@ class InstanceGroupManager: ObservableObject {
                     self.isFetching[instance.id] = false
                 }
             } catch {
+                let errorLog = "[Command] \(command)\n\n[Error] \(error.localizedDescription)\n"
                 await MainActor.run {
+                    outputViewModel.setLogs(errorLog)
                     self.updateInstance(group.id, instanceId: instance.id, ip: nil, fetchedDate: Date(), error: "Process error: \(error.localizedDescription)")
                     self.isFetching[instance.id] = false
                 }

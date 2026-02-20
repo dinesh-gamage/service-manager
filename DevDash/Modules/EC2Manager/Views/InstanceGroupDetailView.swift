@@ -12,6 +12,9 @@ struct InstanceGroupDetailView: View {
     @ObservedObject var state = EC2ManagerState.shared
     let groupId: UUID
 
+    @State private var instanceOutputToView: EC2Instance? = nil
+    @State private var showingOutput = false
+
     // Compute current group from manager's live data
     var group: InstanceGroup? {
         manager.groups.first(where: { $0.id == groupId })
@@ -19,6 +22,7 @@ struct InstanceGroupDetailView: View {
 
     var body: some View {
         if let group = group {
+            ZStack(alignment: .trailing) {
             VStack(alignment: .leading, spacing: 0) {
             // Header
             ModuleDetailHeader(
@@ -97,6 +101,14 @@ struct InstanceGroupDetailView: View {
 
                 TableColumn("") { instance in
                     HStack(spacing: 6) {
+                        // View Output button (only if output exists)
+                        if manager.instanceOutputs[instance.id] != nil {
+                            VariantButton(icon: "eye", variant: .secondary, tooltip: "View Output") {
+                                instanceOutputToView = instance
+                                showingOutput = true
+                            }
+                        }
+
                         if manager.isFetching[instance.id] == true {
                             ProgressView()
                                 .scaleEffect(0.7)
@@ -119,10 +131,21 @@ struct InstanceGroupDetailView: View {
                         }
                     }
                 }
-                .width(min: 120, ideal: 120, max: 120)
+                .width(min: 160, ideal: 160, max: 160)
             }
             .padding()
         }
+
+                // Slide-over output panel
+                if let instance = instanceOutputToView,
+                   let outputViewModel = manager.instanceOutputs[instance.id] {
+                    OutputSlideOver(
+                        title: "\(instance.name) - Output",
+                        dataSource: outputViewModel,
+                        isPresented: $showingOutput
+                    )
+                }
+            }
         .sheet(isPresented: $state.showingAddInstance) {
             if let selectedGroup = state.selectedGroupForInstance {
                 AddInstanceView(manager: manager, group: selectedGroup)
