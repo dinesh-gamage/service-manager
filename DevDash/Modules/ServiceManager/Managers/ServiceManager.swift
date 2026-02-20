@@ -46,7 +46,11 @@ class ServiceManager: ObservableObject {
             let updatedRuntime = ServiceRuntime(config: newConfig)
             services[index] = updatedRuntime
             saveServices()
-            objectWillChange.send()
+
+            // Update selected service reference if this was the selected one
+            if ServiceManagerState.shared.selectedService?.id == service.id {
+                ServiceManagerState.shared.selectedService = updatedRuntime
+            }
         }
     }
 
@@ -59,8 +63,11 @@ class ServiceManager: ObservableObject {
         Task {
             await withTaskGroup(of: Void.self) { group in
                 for service in services {
-                    group.addTask {
-                        await service.checkStatus()
+                    // Only check services that have a way to check status
+                    if service.config.checkCommand != nil || service.config.port != nil {
+                        group.addTask {
+                            await service.checkStatus()
+                        }
                     }
                 }
             }

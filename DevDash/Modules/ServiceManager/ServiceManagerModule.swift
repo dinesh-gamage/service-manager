@@ -51,53 +51,75 @@ struct ServiceManagerSidebarView: View {
     @ObservedObject var state = ServiceManagerState.shared
 
     var body: some View {
-        ModuleSidebarList(
-            toolbarButtons: [
-                ToolbarButtonConfig(icon: "plus.circle", help: "Add Service") {
+        VStack(spacing: 0) {
+            // Toolbar
+            HStack(spacing: 12) {
+                VariantButton(icon: "plus.circle", variant: .primary, tooltip: "Add Service") {
                     state.showingAddService = true
-                },
-                ToolbarButtonConfig(icon: "square.and.arrow.down", help: "Import Services") {
+                }
+                VariantButton(icon: "square.and.arrow.down", variant: .primary, tooltip: "Import Services") {
                     state.manager.importServices()
-                },
-                ToolbarButtonConfig(icon: "square.and.arrow.up", help: "Export Services") {
+                }
+                VariantButton(icon: "square.and.arrow.up", variant: .primary, tooltip: "Export Services") {
                     state.manager.exportServices()
-                },
-                ToolbarButtonConfig(icon: "curlybraces", help: "Edit JSON") {
+                }
+                VariantButton(icon: "curlybraces", variant: .primary, tooltip: "Edit JSON") {
                     state.showingJSONEditor = true
-                },
-                ToolbarButtonConfig(icon: "arrow.clockwise", help: "Refresh All") {
+                }
+                VariantButton(icon: "arrow.clockwise", variant: .primary, tooltip: "Refresh All") {
                     state.manager.checkAllServices()
                 }
-            ],
-            items: state.manager.services,
-            emptyState: EmptyStateConfig(
-                icon: "gearshape.2",
-                title: "No Services",
-                subtitle: "Add a service to get started",
-                buttonText: "Add Service",
-                buttonIcon: "plus",
-                buttonAction: { state.showingAddService = true }
-            ),
-            selectedItem: $state.selectedService
-        ) { service, isSelected in
-            ModuleSidebarListItem(
-                icon: .status(color: service.isRunning ? AppTheme.statusRunning : AppTheme.statusStopped),
-                title: service.config.name,
-                subtitle: nil,
-                badge: nil,
-                actions: [
-                    ListItemAction(icon: "pencil", variant: .primary, tooltip: "Edit") {
-                        state.serviceToEdit = service
-                        state.showingEditService = true
-                    },
-                    ListItemAction(icon: "trash", variant: .danger, tooltip: "Delete") {
-                        state.serviceToDelete = service
-                        state.showingDeleteConfirmation = true
+                Spacer()
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 6)
+            .background(AppTheme.toolbarBackground)
+
+            Divider()
+
+            // List or empty state
+            if state.manager.services.isEmpty {
+                VStack(spacing: 12) {
+                    Image(systemName: "gearshape.2")
+                        .font(.system(size: 48))
+                        .foregroundColor(.secondary)
+
+                    Text("No Services")
+                        .font(.headline)
+                        .foregroundColor(.secondary)
+
+                    Text("Add a service to get started")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
+                    Button(action: { state.showingAddService = true }) {
+                        Label("Add Service", systemImage: "plus")
                     }
-                ],
-                isSelected: isSelected,
-                onTap: { state.selectedService = service }
-            )
+                    .buttonStyle(.borderedProminent)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List {
+                    ForEach(state.manager.services) { service in
+                        ServiceListItem(
+                            service: service,
+                            isSelected: state.selectedService?.id == service.id,
+                            onDelete: {
+                                state.serviceToDelete = service
+                                state.showingDeleteConfirmation = true
+                            },
+                            onEdit: {
+                                state.serviceToEdit = service
+                                state.showingEditService = true
+                            }
+                        )
+                        .onTapGesture {
+                            state.selectedService = service
+                        }
+                    }
+                }
+                .listStyle(.plain)
+            }
         }
         .sheet(isPresented: $state.showingAddService) {
             AddServiceView(manager: state.manager)

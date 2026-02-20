@@ -127,6 +127,11 @@ struct ContentView: View {
                 })
             }
         }
+        .onChange(of: selectedModuleId) { oldValue, newValue in
+            if newValue == "service-manager" {
+                ServiceManagerState.shared.manager.checkAllServices()
+            }
+        }
     }
 }
 

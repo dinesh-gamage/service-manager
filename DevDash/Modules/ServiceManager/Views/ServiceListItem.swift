@@ -65,6 +65,7 @@ struct ServiceListItem: View {
         }
         .padding(.vertical, AppTheme.itemVerticalPadding)
         .padding(.horizontal, AppTheme.itemHorizontalPadding)
+        .contentShape(Rectangle())
         .listRowBackground(
             RoundedRectangle(cornerRadius: AppTheme.itemCornerRadius)
                 .fill((isSelected || isHovering) ? accentColor.current.opacity(AppTheme.itemSelectedBackground) : AppTheme.clearColor)

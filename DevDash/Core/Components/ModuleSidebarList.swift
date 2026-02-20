@@ -167,6 +167,7 @@ struct ModuleSidebarList<Item: Identifiable>: View {
     let items: [Item]
     let emptyState: EmptyStateConfig
     let selectedItem: Binding<Item?>
+    let refreshTrigger: UUID?
     let itemContent: (Item, Bool) -> ModuleSidebarListItem
 
     var body: some View {
@@ -229,7 +230,7 @@ struct ModuleSidebarList<Item: Identifiable>: View {
                     }
                 }
                 .listStyle(.plain)
-                .id(AppTheme.AccentColor.shared.current)
+                .id(refreshTrigger != nil ? AnyHashable(refreshTrigger!) : AnyHashable(AppTheme.AccentColor.shared.current))
             }
         }
     }

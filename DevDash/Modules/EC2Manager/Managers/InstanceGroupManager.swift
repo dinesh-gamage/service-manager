@@ -15,6 +15,7 @@ class InstanceGroupManager: ObservableObject {
     @Published var groups: [InstanceGroup] = []
     @Published var isFetching: [UUID: Bool] = [:]
     @Published var instanceOutputs: [UUID: CommandOutputViewModel] = [:]
+    @Published var listRefreshTrigger = UUID()
 
     private weak var alertQueue: AlertQueue?
 
@@ -38,6 +39,14 @@ class InstanceGroupManager: ObservableObject {
             groups[groupIndex].instances[instanceIndex].lastFetched = fetchedDate
             groups[groupIndex].instances[instanceIndex].fetchError = error
             saveGroups()
+
+            // Update selected group reference if this group is selected
+            if EC2ManagerState.shared.selectedGroup?.id == groupId {
+                EC2ManagerState.shared.selectedGroup = groups[groupIndex]
+            }
+
+            listRefreshTrigger = UUID()
+            objectWillChange.send()
         }
     }
 
@@ -127,12 +136,20 @@ class InstanceGroupManager: ObservableObject {
     func addGroup(_ group: InstanceGroup) {
         groups.append(group)
         saveGroups()
+        listRefreshTrigger = UUID()
     }
 
     func updateGroup(groupId: UUID, newGroup: InstanceGroup) {
         if let index = groups.firstIndex(where: { $0.id == groupId }) {
             groups[index] = newGroup
             saveGroups()
+
+            // Update selected group reference if this was the selected one
+            if EC2ManagerState.shared.selectedGroup?.id == groupId {
+                EC2ManagerState.shared.selectedGroup = newGroup
+            }
+
+            listRefreshTrigger = UUID()
             objectWillChange.send()
         }
     }
@@ -140,6 +157,7 @@ class InstanceGroupManager: ObservableObject {
     func deleteGroup(at offsets: IndexSet) {
         groups.remove(atOffsets: offsets)
         saveGroups()
+        listRefreshTrigger = UUID()
     }
 
     // MARK: - Instance CRUD
@@ -148,6 +166,7 @@ class InstanceGroupManager: ObservableObject {
         if let index = groups.firstIndex(where: { $0.id == groupId }) {
             groups[index].instances.append(instance)
             saveGroups()
+            listRefreshTrigger = UUID()
         }
     }
 
@@ -156,6 +175,7 @@ class InstanceGroupManager: ObservableObject {
            let instanceIndex = groups[groupIndex].instances.firstIndex(where: { $0.id == instanceId }) {
             groups[groupIndex].instances[instanceIndex] = newInstance
             saveGroups()
+            listRefreshTrigger = UUID()
         }
     }
 
@@ -164,6 +184,7 @@ class InstanceGroupManager: ObservableObject {
            let instanceIndex = groups[groupIndex].instances.firstIndex(where: { $0.id == instanceId }) {
             groups[groupIndex].instances.remove(at: instanceIndex)
             saveGroups()
+            listRefreshTrigger = UUID()
         }
     }
 

@@ -85,7 +85,8 @@ struct EC2ManagerSidebarView: View {
                 buttonIcon: "plus",
                 buttonAction: { state.showingAddGroup = true }
             ),
-            selectedItem: $state.selectedGroup
+            selectedItem: $state.selectedGroup,
+            refreshTrigger: state.manager.listRefreshTrigger
         ) { group, isSelected in
             let recentCount = group.instances.filter { $0.lastKnownIP != nil && $0.fetchError == nil }.count
 

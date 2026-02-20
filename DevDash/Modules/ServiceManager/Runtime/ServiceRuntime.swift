@@ -435,8 +435,13 @@ class ServiceRuntime: ObservableObject, Identifiable, Hashable, OutputViewDataSo
                         self.hasPortConflict = pid != nil
                         self.conflictingPID = pid
                         if pid != nil && ownedProcess == nil {
+                            // Port is in use by external process
                             self.isExternallyManaged = true
                             self.isRunning = true
+                        } else if pid == nil && ownedProcess == nil {
+                            // Port is free and we don't own the process - service is stopped
+                            self.isExternallyManaged = false
+                            self.isRunning = false
                         }
                         self.logs += "[Check] Port \(port) is \(pid != nil ? "in use by PID \(pid!)" : "free")\n"
                     }
