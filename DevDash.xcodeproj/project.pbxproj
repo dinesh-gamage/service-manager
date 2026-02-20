@@ -7,13 +7,13 @@
 	objects = {
 
 /* Begin PBXFileReference section */
-		8CC903F92F40370100648A3A /* ServiceManager.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ServiceManager.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		8CC903F92F40370100648A3A /* DevDash.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = DevDash.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		8CC903FB2F40370100648A3A /* ServiceManager */ = {
+		8CC903FB2F40370100648A3A /* DevDash */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = ServiceManager;
+			path = DevDash;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -32,7 +32,7 @@
 		8CC903F02F40370100648A3A = {
 			isa = PBXGroup;
 			children = (
-				8CC903FB2F40370100648A3A /* ServiceManager */,
+				8CC903FB2F40370100648A3A /* DevDash */,
 				8CC903FA2F40370100648A3A /* Products */,
 			);
 			sourceTree = "<group>";
@@ -40,7 +40,7 @@
 		8CC903FA2F40370100648A3A /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				8CC903F92F40370100648A3A /* ServiceManager.app */,
+				8CC903F92F40370100648A3A /* DevDash.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -48,9 +48,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		8CC903F82F40370100648A3A /* ServiceManager */ = {
+		8CC903F82F40370100648A3A /* DevDash */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 8CC904042F40370200648A3A /* Build configuration list for PBXNativeTarget "ServiceManager" */;
+			buildConfigurationList = 8CC904042F40370200648A3A /* Build configuration list for PBXNativeTarget "DevDash" */;
 			buildPhases = (
 				8CC903F52F40370100648A3A /* Sources */,
 				8CC903F62F40370100648A3A /* Frameworks */,
@@ -61,13 +61,13 @@
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
-				8CC903FB2F40370100648A3A /* ServiceManager */,
+				8CC903FB2F40370100648A3A /* DevDash */,
 			);
-			name = ServiceManager;
+			name = DevDash;
 			packageProductDependencies = (
 			);
 			productName = ServiceManager;
-			productReference = 8CC903F92F40370100648A3A /* ServiceManager.app */;
+			productReference = 8CC903F92F40370100648A3A /* DevDash.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -85,7 +85,7 @@
 					};
 				};
 			};
-			buildConfigurationList = 8CC903F42F40370100648A3A /* Build configuration list for PBXProject "ServiceManager" */;
+			buildConfigurationList = 8CC903F42F40370100648A3A /* Build configuration list for PBXProject "DevDash" */;
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -99,7 +99,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				8CC903F82F40370100648A3A /* ServiceManager */,
+				8CC903F82F40370100648A3A /* DevDash */,
 			);
 		};
 /* End PBXProject section */
@@ -312,7 +312,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		8CC903F42F40370100648A3A /* Build configuration list for PBXProject "ServiceManager" */ = {
+		8CC903F42F40370100648A3A /* Build configuration list for PBXProject "DevDash" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				8CC904022F40370200648A3A /* Debug */,
@@ -321,7 +321,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		8CC904042F40370200648A3A /* Build configuration list for PBXNativeTarget "ServiceManager" */ = {
+		8CC904042F40370200648A3A /* Build configuration list for PBXNativeTarget "DevDash" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				8CC904052F40370200648A3A /* Debug */,

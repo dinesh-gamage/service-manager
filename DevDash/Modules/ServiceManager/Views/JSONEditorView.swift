@@ -1,0 +1,105 @@
+//
+//  JSONEditorView.swift
+//  DevDash
+//
+//  Created by Dinesh Gamage on 2026-02-20.
+//
+
+import SwiftUI
+import Combine
+
+struct JSONEditorView: View {
+    @Environment(\.dismiss) var dismiss
+    @ObservedObject var manager: ServiceManager
+
+    @State private var jsonText: String = ""
+    @State private var errorMessage: String?
+    @State private var isValidJSON: Bool = true
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                // Error banner
+                if let error = errorMessage {
+                    HStack {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundColor(.red)
+                        Text(error)
+                            .font(.caption)
+                            .foregroundColor(.red)
+                        Spacer()
+                    }
+                    .padding()
+                    .background(AppTheme.errorBackground)
+                }
+
+                // JSON Editor
+                PlainTextEditor(text: $jsonText)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .onChange(of: jsonText) { oldValue, newValue in
+                        validateJSON()
+                    }
+            }
+            .navigationTitle("Edit Services JSON")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        saveJSON()
+                    }
+                    .disabled(!isValidJSON)
+                }
+            }
+        }
+        .frame(minWidth: 700, minHeight: 500)
+        .onAppear {
+            loadJSON()
+        }
+    }
+
+    func loadJSON() {
+        let configs = manager.services.map { $0.config }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+
+        if let jsonData = try? encoder.encode(configs),
+           let jsonString = String(data: jsonData, encoding: .utf8) {
+            jsonText = jsonString
+        }
+    }
+
+    func validateJSON() {
+        guard let jsonData = jsonText.data(using: .utf8) else {
+            errorMessage = "Invalid text encoding"
+            isValidJSON = false
+            return
+        }
+
+        do {
+            let _ = try JSONDecoder().decode([ServiceConfig].self, from: jsonData)
+            errorMessage = nil
+            isValidJSON = true
+        } catch {
+            errorMessage = "Invalid JSON: \(error.localizedDescription)"
+            isValidJSON = false
+        }
+    }
+
+    func saveJSON() {
+        guard let jsonData = jsonText.data(using: .utf8),
+              let configs = try? JSONDecoder().decode([ServiceConfig].self, from: jsonData) else {
+            return
+        }
+
+        // Replace all services with new ones
+        manager.services = configs.map { ServiceRuntime(config: $0) }
+        manager.saveServices()
+        manager.objectWillChange.send()
+
+        dismiss()
+    }
+}

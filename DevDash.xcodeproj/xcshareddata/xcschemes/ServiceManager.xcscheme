@@ -16,9 +16,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "8CC903F82F40370100648A3A"
-               BuildableName = "ServiceManager.app"
-               BlueprintName = "ServiceManager"
-               ReferencedContainer = "container:ServiceManager.xcodeproj">
+               BuildableName = "DevDash.app"
+               BlueprintName = "DevDash"
+               ReferencedContainer = "container:DevDash.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -45,9 +45,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "8CC903F82F40370100648A3A"
-            BuildableName = "ServiceManager.app"
-            BlueprintName = "ServiceManager"
-            ReferencedContainer = "container:ServiceManager.xcodeproj">
+            BuildableName = "DevDash.app"
+            BlueprintName = "DevDash"
+            ReferencedContainer = "container:DevDash.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </LaunchAction>
@@ -62,9 +62,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "8CC903F82F40370100648A3A"
-            BuildableName = "ServiceManager.app"
-            BlueprintName = "ServiceManager"
-            ReferencedContainer = "container:ServiceManager.xcodeproj">
+            BuildableName = "DevDash.app"
+            BlueprintName = "DevDash"
+            ReferencedContainer = "container:DevDash.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </ProfileAction>
