@@ -7,15 +7,17 @@
 
 import SwiftUI
 
-struct CommandOutputView<DataSource: OutputViewDataSource>: View {
+struct CommandOutputView<DataSource: OutputViewDataSource, CustomTitle: View>: View {
     @ObservedObject var dataSource: DataSource
+    let customTitle: CustomTitle?
 
     @State private var showingErrors = false
     @State private var showingWarnings = false
     @State private var searchText = ""
 
-    init(dataSource: DataSource) {
+    init(dataSource: DataSource, @ViewBuilder customTitle: () -> CustomTitle) {
         self.dataSource = dataSource
+        self.customTitle = customTitle()
     }
 
     var body: some View {
@@ -36,6 +38,8 @@ struct CommandOutputView<DataSource: OutputViewDataSource>: View {
                         }
                     }
                     .buttonStyle(.plain)
+                } else if let title = customTitle {
+                    title
                 } else {
                     Text("Output")
                         .font(.headline)
@@ -138,5 +142,13 @@ struct CommandOutputView<DataSource: OutputViewDataSource>: View {
                 LogView(logs: dataSource.logs, searchText: $searchText)
             }
         }
+    }
+}
+
+// Convenience initializer for default "Output" title (Service Manager case)
+extension CommandOutputView where CustomTitle == EmptyView {
+    init(dataSource: DataSource) {
+        self.dataSource = dataSource
+        self.customTitle = nil
     }
 }

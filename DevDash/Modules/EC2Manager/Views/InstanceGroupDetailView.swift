@@ -22,34 +22,53 @@ struct InstanceGroupDetailView: View {
 
     var body: some View {
         if let group = group {
-            ZStack(alignment: .trailing) {
             VStack(alignment: .leading, spacing: 0) {
-            // Header
-            ModuleDetailHeader(
-                title: group.name,
-                metadata: [
-                    MetadataRow(icon: "globe", label: "Region", value: group.region),
-                    MetadataRow(icon: "key", label: "Profile", value: group.awsProfile)
-                ],
-                actionButtons: {
-                    HStack(spacing: 12) {
-                        VariantButton("Add Instance", icon: "plus", variant: .primary) {
-                            state.selectedGroupForInstance = group
-                            state.showingAddInstance = true
-                        }
+                // Header
+                ModuleDetailHeader(
+                    title: group.name,
+                    metadata: [
+                        MetadataRow(icon: "globe", label: "Region", value: group.region),
+                        MetadataRow(icon: "key", label: "Profile", value: group.awsProfile)
+                    ],
+                    actionButtons: {
+                        HStack(spacing: 12) {
+                            VariantButton("Add Instance", icon: "plus", variant: .primary) {
+                                state.selectedGroupForInstance = group
+                                state.showingAddInstance = true
+                            }
 
-                        VariantButton("Edit Group", icon: "pencil", variant: .secondary) {
-                            state.groupToEdit = group
-                            state.showingEditGroup = true
+                            VariantButton("Edit Group", icon: "pencil", variant: .secondary) {
+                                state.groupToEdit = group
+                                state.showingEditGroup = true
+                            }
                         }
                     }
-                }
-            )
+                )
 
-            Divider()
+                Divider()
 
-            // Instance Table
-            Table(group.instances) {
+                // Conditional: Show output panel OR instance table
+                if showingOutput,
+                   let instance = instanceOutputToView,
+                   let outputViewModel = manager.instanceOutputs[instance.id] {
+                    // Output panel with custom title
+                    CommandOutputView(dataSource: outputViewModel) {
+                        Button(action: {
+                            showingOutput = false
+                            instanceOutputToView = nil
+                        }) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "chevron.left")
+                                    .font(.caption)
+                                Text("\(instance.name) Output")
+                                    .font(.headline)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                } else {
+                    // Instance Table
+                    Table(group.instances) {
                 TableColumn("Name") { instance in
                     Text(instance.name)
                         .font(.body)
@@ -132,21 +151,11 @@ struct InstanceGroupDetailView: View {
                     }
                 }
                 .width(min: 160, ideal: 160, max: 160)
-            }
-            .padding()
-        }
-
-                // Slide-over output panel
-                if let instance = instanceOutputToView,
-                   let outputViewModel = manager.instanceOutputs[instance.id] {
-                    OutputSlideOver(
-                        title: "\(instance.name) - Output",
-                        dataSource: outputViewModel,
-                        isPresented: $showingOutput
-                    )
+                    }
+                    .padding()
                 }
             }
-        .sheet(isPresented: $state.showingAddInstance) {
+            .sheet(isPresented: $state.showingAddInstance) {
             if let selectedGroup = state.selectedGroupForInstance {
                 AddInstanceView(manager: manager, group: selectedGroup)
             }
