@@ -90,11 +90,50 @@ class ServiceRuntime: ObservableObject, Identifiable, Hashable {
     private var process: Process?
     private var pipe: Pipe?
 
+    // Ring buffer for logs: fixed-size array of lines
+    private var logLines: [String] = []
+    private let maxBufferLines: Int
+
+    // Log batching: buffer incoming data, flush on timer
+    private var logBuffer = ""
+    private var flushTimer: DispatchSourceTimer?
+
+    // Flag set when "EADDRINUSE" is seen in a chunk (avoids full log scan at termination)
+    private var seenEADDRINUSE = false
+
+    // Static pattern arrays — allocated once, not per parsed line
+    private static let errorPatterns: [String] = [
+        "error", "err", "fatal", "fail", "failed", "failure",
+        "exception", "panic", "critical", "severe", "cannot",
+        "unable to", "not found", "invalid", "undefined",
+        "traceback", "stacktrace"
+    ]
+    private static let warningPatterns: [String] = [
+        "warning", "warn", "deprecated", "obsolete", "caution",
+        "notice", "should", "recommend", "may cause"
+    ]
+
+    // Pre-compiled regex for stack trace numeric-line detection
+    private static let stackTraceLineRegex = /^\s*\d+\s+/
+
+    // Cap on errors/warnings arrays to prevent unbounded memory growth
+    private static let maxEntries = 500
+    private static let trimToEntries = 400
+
     // Identifiable conformance
     var id: UUID { config.id }
 
     init(config: ServiceConfig) {
         self.config = config
+        self.maxBufferLines = config.maxLogLines ?? 1000
+    }
+
+    deinit {
+        // Clean up resources - must happen synchronously in deinit
+        flushTimer?.cancel()
+        flushTimer = nil
+        pipe?.fileHandleForReading.readabilityHandler = nil
+        process?.terminate()
     }
 
     // Hashable conformance
@@ -122,7 +161,7 @@ class ServiceRuntime: ObservableObject, Identifiable, Hashable {
                                trimmed.hasPrefix("at ") ||
                                trimmed.contains("(") && trimmed.contains(")") && trimmed.contains(":") ||
                                trimmed.hasPrefix("File ") ||
-                               trimmed.matches(of: /^\s*\d+\s+/).count > 0
+                               trimmed.contains(Self.stackTraceLineRegex)
 
         // If we're collecting a stack trace
         if collectingStackTrace {
@@ -139,22 +178,8 @@ class ServiceRuntime: ObservableObject, Identifiable, Hashable {
             }
         }
 
-        // Error patterns
-        let errorPatterns = [
-            "error", "err", "fatal", "fail", "failed", "failure",
-            "exception", "panic", "critical", "severe", "cannot",
-            "unable to", "not found", "invalid", "undefined",
-            "traceback", "stacktrace"
-        ]
-
-        // Warning patterns
-        let warningPatterns = [
-            "warning", "warn", "deprecated", "obsolete", "caution",
-            "notice", "should", "recommend", "may cause"
-        ]
-
         // Check for errors
-        for pattern in errorPatterns {
+        for pattern in Self.errorPatterns {
             if lowercased.contains(pattern) {
                 let entry = LogEntry(
                     message: trimmed,
@@ -164,16 +189,17 @@ class ServiceRuntime: ObservableObject, Identifiable, Hashable {
                     stackTrace: nil
                 )
                 errors.append(entry)
-
-                // Start collecting stack trace
+                if errors.count > Self.maxEntries {
+                    errors.removeFirst(errors.count - Self.trimToEntries)
+                }
                 collectingStackTrace = true
                 currentStackTrace = []
-                return // Don't double-count as error and warning
+                return
             }
         }
 
         // Check for warnings
-        for pattern in warningPatterns {
+        for pattern in Self.warningPatterns {
             if lowercased.contains(pattern) {
                 let entry = LogEntry(
                     message: trimmed,
@@ -183,9 +209,57 @@ class ServiceRuntime: ObservableObject, Identifiable, Hashable {
                     stackTrace: nil
                 )
                 warnings.append(entry)
+                if warnings.count > Self.maxEntries {
+                    warnings.removeFirst(warnings.count - Self.trimToEntries)
+                }
                 return
             }
         }
+    }
+
+    // MARK: - Log flush (called on main queue by timer)
+
+    private func startFlushTimer() {
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now() + .milliseconds(100), repeating: .milliseconds(100))
+        timer.setEventHandler { [weak self] in
+            self?.flushLogBuffer()
+        }
+        timer.resume()
+        flushTimer = timer
+    }
+
+    private func stopFlushTimer() {
+        flushTimer?.cancel()
+        flushTimer = nil
+        // Flush any remaining buffered data
+        flushLogBuffer()
+    }
+
+    private func flushLogBuffer() {
+        guard !logBuffer.isEmpty else { return }
+        let chunk = logBuffer
+        logBuffer = ""
+
+        // Check for EADDRINUSE in the chunk (cheap, only chunk-sized)
+        if !seenEADDRINUSE && chunk.contains("EADDRINUSE") {
+            seenEADDRINUSE = true
+        }
+
+        // Parse new lines and add to ring buffer
+        let lines = chunk.components(separatedBy: .newlines)
+        for line in lines where !line.isEmpty {
+            parseLine(line)
+
+            // Add to ring buffer with proactive trimming
+            logLines.append(line)
+            if logLines.count > maxBufferLines {
+                logLines.removeFirst(logLines.count - maxBufferLines)
+            }
+        }
+
+        // Rebuild logs string from ring buffer (only when publishing)
+        logs = logLines.joined(separator: "\n")
     }
 
     // Start the service
@@ -193,9 +267,12 @@ class ServiceRuntime: ObservableObject, Identifiable, Hashable {
         if isRunning { return }
 
         logs = ""
+        logLines = []
         errors = []
         warnings = []
         lineNumber = 0
+        logBuffer = ""
+        seenEADDRINUSE = false
         collectingStackTrace = false
         currentStackTrace = []
 
@@ -299,41 +376,33 @@ class ServiceRuntime: ObservableObject, Identifiable, Hashable {
                 self.pipe = pipe
             }
 
-            // Live log streaming
-            pipe.fileHandleForReading.readabilityHandler = { handle in
+            // Live log streaming — append to buffer only; timer flushes to UI at 100ms intervals
+            pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+                guard let self else { return }
                 let data = handle.availableData
-                if data.count > 0, let output = String(data: data, encoding: .utf8) {
-                    Task { @MainActor in
-                        self.logs += output
-                        let lines = output.components(separatedBy: .newlines)
-                        for line in lines where !line.isEmpty {
-                            self.parseLine(line)
-                        }
-                        // Amortized trim: only split/join when well over the limit
-                        if let max = self.config.maxLogLines {
-                            let threshold = max + 200
-                            let approxCount = self.logs.lazy.filter { $0 == "\n" }.count
-                            if approxCount > threshold {
-                                let allLines = self.logs.components(separatedBy: "\n")
-                                self.logs = allLines.suffix(max).joined(separator: "\n")
-                            }
-                        }
-                    }
+                guard data.count > 0, let output = String(data: data, encoding: .utf8) else { return }
+                Task { @MainActor [weak self] in
+                    self?.logBuffer += output
                 }
             }
+
+            // Start the flush timer on main queue
+            await MainActor.run { self.startFlushTimer() }
 
             // Termination handler
             process.terminationHandler = { [weak self] proc in
                 Task { @MainActor [weak self] in
                     guard let self else { return }
-                    self.logs += "\n[Process terminated with code \(proc.terminationStatus)]\n"
-                    if self.logs.contains("EADDRINUSE") {
+                    self.stopFlushTimer()
+                    self.logBuffer += "\n[Process terminated with code \(proc.terminationStatus)]\n"
+                    self.flushLogBuffer()
+                    if self.seenEADDRINUSE {
                         self.detectPortConflict()
                     }
                     // If a check command or port is configured, re-check true state
                     // (handles fire-and-forget launchers like `open -a Docker`)
                     if self.config.checkCommand != nil || self.config.port != nil {
-                        self.checkStatus()
+                        Task { await self.checkStatus() }
                     } else {
                         self.process = nil
                         self.isRunning = false
@@ -352,38 +421,43 @@ class ServiceRuntime: ObservableObject, Identifiable, Hashable {
         }
     }
 
-    // Check if port is in use — must be called from main thread
+    // Check if port is in use — runs async off main thread
     func checkPort(_ port: Int) {
-        hasPortConflict = false
-        conflictingPID = nil
+        Task.detached(priority: .userInitiated) {
+            let task = Process()
+            task.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
+            task.arguments = ["-i", ":\(port)", "-t"]
 
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
-        task.arguments = ["-i", ":\(port)", "-t"]
+            let pipe = Pipe()
+            task.standardOutput = pipe
 
-        let pipe = Pipe()
-        task.standardOutput = pipe
+            do {
+                try task.run()
+                task.waitUntilExit()
 
-        do {
-            try task.run()
-            task.waitUntilExit()
-
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            if let output = String(data: data, encoding: .utf8) {
-                let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !trimmed.isEmpty {
-                    let pids = trimmed.components(separatedBy: .newlines)
-                    if let firstPID = pids.first, let pid = Int(firstPID) {
-                        hasPortConflict = true
-                        conflictingPID = pid
-                        logs += "[Port Check] Port \(port) is in use by PID \(pid)\n"
+                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                if let output = String(data: data, encoding: .utf8) {
+                    let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+                    await MainActor.run {
+                        if !trimmed.isEmpty {
+                            let pids = trimmed.components(separatedBy: .newlines)
+                            if let firstPID = pids.first, let pid = Int(firstPID) {
+                                self.hasPortConflict = true
+                                self.conflictingPID = pid
+                                self.logs += "[Port Check] Port \(port) is in use by PID \(pid)\n"
+                            }
+                        } else {
+                            self.hasPortConflict = false
+                            self.conflictingPID = nil
+                            self.logs += "[Port Check] Port \(port) is free\n"
+                        }
                     }
-                } else {
-                    logs += "[Port Check] Port \(port) is free\n"
+                }
+            } catch {
+                await MainActor.run {
+                    self.logs += "[Port Check] Failed to check port \(port): \(error.localizedDescription)\n"
                 }
             }
-        } catch {
-            logs += "[Port Check] Failed to check port \(port): \(error.localizedDescription)\n"
         }
     }
 
@@ -394,8 +468,8 @@ class ServiceRuntime: ObservableObject, Identifiable, Hashable {
     }
 
     // Check if service is running (via checkCommand or port fallback)
-    // Safe to call from any thread — blocking work runs in a detached task
-    func checkStatus() {
+    // Async function that runs blocking work off main thread
+    func checkStatus() async {
         let config = self.config
         let ownedProcess = self.process
 
@@ -484,6 +558,8 @@ class ServiceRuntime: ObservableObject, Identifiable, Hashable {
 
     // Stop the service
     func stop() {
+        stopFlushTimer()
+        pipe?.fileHandleForReading.readabilityHandler = nil
         let config = self.config
 
         // Case 1: custom stop command
@@ -663,8 +739,14 @@ class ServiceManager: ObservableObject {
     }
 
     func checkAllServices() {
-        for service in services {
-            service.checkStatus()
+        Task {
+            await withTaskGroup(of: Void.self) { group in
+                for service in services {
+                    group.addTask {
+                        await service.checkStatus()
+                    }
+                }
+            }
         }
     }
 
@@ -991,7 +1073,7 @@ struct ServiceDetailView: View {
                     }
 
                     Button {
-                        service.checkStatus()
+                        Task { await service.checkStatus() }
                     } label: {
                         Image(systemName: "arrow.clockwise")
                     }
@@ -1143,8 +1225,8 @@ struct ServiceDetailView: View {
                 }
             }
         }
-        .onAppear {
-            service.checkStatus()
+        .task {
+            await service.checkStatus()
         }
     }
 }
@@ -1243,19 +1325,12 @@ struct LogView: View {
     @State private var shouldAutoScroll = true
     @State private var searchText = ""
 
-    private var matchCount: Int {
-        guard !searchText.isEmpty else { return 0 }
-        let lowercasedLogs = logs.lowercased()
-        let lowercasedSearch = searchText.lowercased()
-        var count = 0
-        var searchRange = lowercasedLogs.startIndex..<lowercasedLogs.endIndex
+    // Memoized search results — only recomputed when logs or searchText actually change
+    @State private var matchCount: Int = 0
+    @State private var highlightedText: AttributedString? = nil
 
-        while let range = lowercasedLogs.range(of: lowercasedSearch, range: searchRange) {
-            count += 1
-            searchRange = range.upperBound..<lowercasedLogs.endIndex
-        }
-        return count
-    }
+    // Debounce timer for search
+    @State private var searchDebounceTask: Task<Void, Never>? = nil
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1298,15 +1373,15 @@ struct LogView: View {
             // Logs with highlighting
             ScrollViewReader { proxy in
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 0) {
+                    LazyVStack(alignment: .leading, spacing: 0) {
                         if searchText.isEmpty {
                             Text(logs)
                                 .font(.system(.body, design: .monospaced))
                                 .textSelection(.enabled)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(8)
-                        } else {
-                            Text(highlightedAttributedString(logs, searchText: searchText))
+                        } else if let attr = highlightedText {
+                            Text(attr)
                                 .font(.system(.body, design: .monospaced))
                                 .textSelection(.enabled)
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1327,6 +1402,12 @@ struct LogView: View {
                             proxy.scrollTo("bottom", anchor: .bottom)
                         }
                     }
+                    if !searchText.isEmpty {
+                        debouncedSearch()
+                    }
+                }
+                .onChange(of: searchText) { _, _ in
+                    debouncedSearch()
                 }
                 .onAppear {
                     proxy.scrollTo("bottom", anchor: .bottom)
@@ -1335,27 +1416,43 @@ struct LogView: View {
         }
     }
 
-    private func highlightedAttributedString(_ text: String, searchText: String) -> AttributedString {
-        var attributedString = AttributedString(text)
-        let lowercasedText = text.lowercased()
-        let lowercasedSearch = searchText.lowercased()
+    private func debouncedSearch() {
+        // Cancel previous search task
+        searchDebounceTask?.cancel()
 
+        // Schedule new search after 300ms delay
+        searchDebounceTask = Task {
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                recomputeSearch()
+            }
+        }
+    }
+
+    private func recomputeSearch() {
+        guard !searchText.isEmpty else {
+            matchCount = 0
+            highlightedText = nil
+            return
+        }
+        let lowercasedText = logs.lowercased()
+        let lowercasedSearch = searchText.lowercased()
+        var count = 0
+        var attributed = AttributedString(logs)
         var searchRange = lowercasedText.startIndex..<lowercasedText.endIndex
 
         while let matchRange = lowercasedText.range(of: lowercasedSearch, range: searchRange) {
-            // Convert String.Index to AttributedString.Index
-            let lowerBound = AttributedString.Index(matchRange.lowerBound, within: attributedString)!
-            let upperBound = AttributedString.Index(matchRange.upperBound, within: attributedString)!
-            let attrRange = lowerBound..<upperBound
-
-            // Apply yellow background to match
-            attributedString[attrRange].backgroundColor = .yellow.opacity(0.5)
-
-            // Continue searching after this match
+            count += 1
+            if let lb = AttributedString.Index(matchRange.lowerBound, within: attributed),
+               let ub = AttributedString.Index(matchRange.upperBound, within: attributed) {
+                attributed[lb..<ub].backgroundColor = .yellow.opacity(0.5)
+            }
             searchRange = matchRange.upperBound..<lowercasedText.endIndex
         }
 
-        return attributedString
+        matchCount = count
+        highlightedText = attributed
     }
 }
 
