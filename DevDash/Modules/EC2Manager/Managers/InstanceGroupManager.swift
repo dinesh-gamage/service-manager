@@ -30,6 +30,7 @@ class InstanceGroupManager: ObservableObject {
 
     // Tunnel management
     private var tunnelRuntimes: [UUID: TunnelRuntime] = [:]
+    private var tunnelCancellables: [UUID: AnyCancellable] = [:]
 
     init(alertQueue: AlertQueue? = nil, toastQueue: ToastQueue? = nil) {
         self.alertQueue = alertQueue
@@ -632,6 +633,13 @@ class InstanceGroupManager: ObservableObject {
         // Create and start tunnel runtime
         let runtime = TunnelRuntime(tunnel: tunnel, bastionIP: bastionIP, sshConfig: sshConfig)
         tunnelRuntimes[tunnel.id] = runtime
+
+        // Subscribe to runtime changes to trigger UI updates
+        let cancellable = runtime.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
+        tunnelCancellables[tunnel.id] = cancellable
+
         runtime.start()
 
         toastQueue?.enqueue(message: "Tunnel '\(tunnel.name)' started")

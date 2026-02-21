@@ -31,25 +31,25 @@ struct TunnelForm: View {
         Form {
             Section("Tunnel Details") {
                 FormField(label: "Name") {
-                    TextField("MongoDB Tunnel", text: $name)
+                    TextField("", text: $name)
                         .textFieldStyle(.roundedBorder)
                         .onChange(of: name) { _, _ in updateTunnel() }
                 }
 
                 FormField(label: "Local Port") {
-                    TextField("10000", text: $localPort)
+                    TextField("", text: $localPort)
                         .textFieldStyle(.roundedBorder)
                         .onChange(of: localPort) { _, _ in updateTunnel() }
                 }
 
                 FormField(label: "Remote Host") {
-                    TextField("mongodb.internal.example.com", text: $remoteHost)
+                    TextField("", text: $remoteHost)
                         .textFieldStyle(.roundedBorder)
                         .onChange(of: remoteHost) { _, _ in updateTunnel() }
                 }
 
                 FormField(label: "Remote Port") {
-                    TextField("27017", text: $remotePort)
+                    TextField("", text: $remotePort)
                         .textFieldStyle(.roundedBorder)
                         .onChange(of: remotePort) { _, _ in updateTunnel() }
                 }

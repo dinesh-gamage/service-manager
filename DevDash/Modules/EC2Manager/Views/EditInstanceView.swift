@@ -22,6 +22,15 @@ struct EditInstanceView: View {
     @State private var tunnelToDelete: SSHTunnel?
     @State private var showingDeleteTunnelConfirmation = false
 
+    // Computed property to get current instance from manager
+    private var currentInstance: EC2Instance? {
+        guard let groupIndex = manager.groups.firstIndex(where: { $0.id == group.id }),
+              let instanceIndex = manager.groups[groupIndex].instances.firstIndex(where: { $0.id == instance.id }) else {
+            return nil
+        }
+        return manager.groups[groupIndex].instances[instanceIndex]
+    }
+
     init(manager: InstanceGroupManager, group: InstanceGroup, instance: EC2Instance) {
         self.manager = manager
         self.group = group
@@ -73,13 +82,13 @@ struct EditInstanceView: View {
                 }
 
                 Section("SSH Tunnels") {
-                    if instance.tunnels.isEmpty {
+                    if currentInstance?.tunnels.isEmpty ?? true {
                         Text("No tunnels configured")
                             .foregroundColor(.secondary)
                             .font(.caption)
-                    } else {
+                    } else if let tunnels = currentInstance?.tunnels {
                         List {
-                            ForEach(instance.tunnels) { tunnel in
+                            ForEach(tunnels) { tunnel in
                                 HStack {
                                     VStack(alignment: .leading, spacing: 4) {
                                         Text(tunnel.name)
@@ -166,7 +175,7 @@ struct EditInstanceView: View {
             lastFetched: instance.lastFetched,
             fetchError: instance.fetchError,
             sshConfig: sshConfig,
-            tunnels: instance.tunnels
+            tunnels: currentInstance?.tunnels ?? []
         )
         manager.updateInstanceData(groupId: group.id, instanceId: instance.id, newInstance: updatedInstance)
         dismiss()
