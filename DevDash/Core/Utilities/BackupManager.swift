@@ -236,6 +236,26 @@ class BackupManager: ObservableObject {
                     timestamp: Date(),
                     errorMessage: errorMessage
                 ))
+
+                // Check if this is an authentication error (AWS vault password denied)
+                if errorMessage.contains("authentication") ||
+                   errorMessage.contains("credentials") ||
+                   errorMessage.contains("denied") ||
+                   errorMessage.contains("cancelled") {
+                    // Stop backup process - don't continue with other modules
+                    // Mark remaining modules as not attempted
+                    let currentIndex = modules.firstIndex(where: { $0.name == moduleName }) ?? 0
+                    for remainingModule in modules[(currentIndex + 1)...] {
+                        moduleProgressMap[remainingModule.name] = BackupProgress(
+                            moduleName: remainingModule.name,
+                            status: "Cancelled",
+                            isComplete: true,
+                            error: "Backup cancelled due to authentication failure",
+                            progress: 0.0
+                        )
+                    }
+                    break
+                }
             }
         }
 

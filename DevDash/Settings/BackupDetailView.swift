@@ -29,6 +29,7 @@ struct BackupDetailView: View {
     @State private var saveError: String?
     @State private var showingSaveSuccess = false
 
+
     private let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateStyle = .medium
@@ -201,10 +202,14 @@ struct BackupDetailView: View {
                         .frame(width: 12, height: 12)
                 }
             } else {
-                // Complete (success or failed)
+                // Complete (success, failed, or cancelled)
                 if moduleProgress.error == nil {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundColor(.green)
+                        .font(.caption)
+                } else if moduleProgress.status == "Cancelled" {
+                    Image(systemName: "minus.circle.fill")
+                        .foregroundColor(.orange)
                         .font(.caption)
                 } else {
                     Image(systemName: "xmark.circle.fill")
