@@ -529,7 +529,10 @@ class InstanceGroupManager: ObservableObject {
 
                 // Import groups - replace if name exists, add if new
                 for group in importedGroups {
-                    if let index = self.groups.firstIndex(where: { $0.name == group.name }) {
+                    let trimmedName = group.name.trimmingCharacters(in: .whitespaces)
+                    if let index = self.groups.firstIndex(where: {
+                        $0.name.trimmingCharacters(in: .whitespaces) == trimmedName
+                    }) {
                         // Replace existing group
                         self.groups[index] = group
                         updatedCount += 1

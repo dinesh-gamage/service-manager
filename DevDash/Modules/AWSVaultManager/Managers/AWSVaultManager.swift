@@ -656,23 +656,23 @@ class AWSVaultManager: ObservableObject {
                     let data = try Data(contentsOf: url)
                     let jsonArray = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] ?? []
 
-                    var importedProfiles: [AWSVaultProfile] = []
-                    let existingNames = Set(self.profiles.map { $0.name })
+                    var newCount = 0
+                    var updatedCount = 0
 
                     for item in jsonArray {
-                        guard let name = item["name"] as? String,
-                              !existingNames.contains(name) else {
+                        guard let name = item["name"] as? String else {
                             continue
                         }
+
+                        let trimmedName = name.trimmingCharacters(in: .whitespaces)
+                        let accessKeyId = item["accessKeyId"] as? String
+                        let secretAccessKey = item["secretAccessKey"] as? String
 
                         var profile = AWSVaultProfile(
                             name: name,
                             region: item["region"] as? String,
                             description: item["description"] as? String
                         )
-
-                        let accessKeyId = item["accessKeyId"] as? String
-                        let secretAccessKey = item["secretAccessKey"] as? String
 
                         // If credentials provided, add to aws-vault
                         if let accessKeyId = accessKeyId, let secretAccessKey = secretAccessKey {
@@ -688,20 +688,38 @@ class AWSVaultManager: ObservableObject {
                             }
                         }
 
-                        importedProfiles.append(profile)
+                        // Check if profile with same name exists (trim whitespace)
+                        await MainActor.run {
+                            if let index = self.profiles.firstIndex(where: {
+                                $0.name.trimmingCharacters(in: .whitespaces) == trimmedName
+                            }) {
+                                // Replace existing profile
+                                self.profiles[index] = profile
+                                updatedCount += 1
+                            } else {
+                                // Add new profile
+                                self.profiles.append(profile)
+                                newCount += 1
+                            }
+                        }
                     }
 
-                    // Single update at the end
+                    // Single save at the end
                     await MainActor.run {
-                        self.profiles.append(contentsOf: importedProfiles)
                         self.saveProfiles()
                         self.isLoading = false
 
-                        if !importedProfiles.isEmpty {
-                            self.toastQueue?.enqueue(message: "Imported \(importedProfiles.count) profile\(importedProfiles.count == 1 ? "" : "s") with credentials")
+                        let message: String
+                        if newCount > 0 && updatedCount > 0 {
+                            message = "Imported \(newCount) new, updated \(updatedCount) existing"
+                        } else if newCount > 0 {
+                            message = "Imported \(newCount) new profile\(newCount == 1 ? "" : "s") with credentials"
+                        } else if updatedCount > 0 {
+                            message = "Updated \(updatedCount) profile\(updatedCount == 1 ? "" : "s")"
                         } else {
-                            self.toastQueue?.enqueue(message: "No new profiles imported")
+                            message = "No new profiles imported"
                         }
+                        self.toastQueue?.enqueue(message: message)
                     }
                 } catch {
                     await MainActor.run {

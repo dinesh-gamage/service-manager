@@ -64,6 +64,16 @@ struct ServiceFormContent: View {
 
                 // Environment Variables
                 FormSection(title: "Environment Variables") {
+                    HStack(spacing: 4) {
+                        Image(systemName: "info.circle")
+                            .foregroundColor(.secondary)
+                            .font(.caption)
+                        Text("System environment variables are automatically available. Add variables here to override or extend them.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.bottom, 4)
+
                     ForEach($envVars) { $envVar in
                         HStack(spacing: 8) {
                             TextField("KEY", text: $envVar.key)

@@ -347,8 +347,11 @@ class CredentialsManager: ObservableObject {
                             )
                         }
 
-                        // Check if credential with same title exists
-                        if let index = self.credentials.firstIndex(where: { $0.title == title }) {
+                        // Check if credential with same title exists (trim whitespace)
+                        let trimmedTitle = title.trimmingCharacters(in: .whitespaces)
+                        if let index = self.credentials.firstIndex(where: {
+                            $0.title.trimmingCharacters(in: .whitespaces) == trimmedTitle
+                        }) {
                             // Replace existing credential
                             let existingCredential = self.credentials[index]
 

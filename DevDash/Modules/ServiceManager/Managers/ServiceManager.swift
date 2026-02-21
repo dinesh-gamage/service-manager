@@ -184,7 +184,10 @@ class ServiceManager: ObservableObject {
 
                     // Import services - replace if name exists, add if new
                     for config in configs {
-                        if let existing = self.runtimes.values.first(where: { $0.config.name == config.name }) {
+                        let trimmedName = config.name.trimmingCharacters(in: .whitespaces)
+                        if let existing = self.runtimes.values.first(where: {
+                            $0.config.name.trimmingCharacters(in: .whitespaces) == trimmedName
+                        }) {
                             // Replace existing service
                             let runtime = ServiceRuntime(config: config)
                             self.subscribeToRuntime(runtime)
