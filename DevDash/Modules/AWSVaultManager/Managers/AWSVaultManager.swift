@@ -51,6 +51,7 @@ class AWSVaultManager: ObservableObject {
             profiles.append(updatedProfile)
             saveProfiles()
             listRefreshTrigger = UUID()
+            objectWillChange.send()
 
             isLoading = false
         } catch {
@@ -82,6 +83,7 @@ class AWSVaultManager: ObservableObject {
                 profiles[index] = updatedProfile
                 saveProfiles()
                 listRefreshTrigger = UUID()
+                objectWillChange.send()
             }
 
             isLoading = false
@@ -107,6 +109,7 @@ class AWSVaultManager: ObservableObject {
         profiles.removeAll { $0.id == profile.id }
         saveProfiles()
         listRefreshTrigger = UUID()
+        objectWillChange.send()
 
         isLoading = false
 
@@ -266,6 +269,7 @@ class AWSVaultManager: ObservableObject {
                 profiles = updatedProfiles
                 saveProfiles()
                 listRefreshTrigger = UUID()
+                objectWillChange.send()
             }
 
             return newProfiles.count
@@ -486,6 +490,7 @@ class AWSVaultManager: ObservableObject {
         // Save updated profiles
         saveProfiles()
         listRefreshTrigger = UUID()
+        objectWillChange.send()
         isLoading = false
 
         if failedProfiles.isEmpty {
@@ -677,7 +682,11 @@ class AWSVaultManager: ObservableObject {
                         importedCount += 1
                     }
 
+                    // Final refresh to ensure UI updates
                     await MainActor.run {
+                        self.listRefreshTrigger = UUID()
+                        self.objectWillChange.send()
+
                         self.alertQueue.enqueue(
                             title: "Import Complete",
                             message: "Imported \(importedCount) profile(s) with credentials"
