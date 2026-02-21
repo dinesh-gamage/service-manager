@@ -53,6 +53,29 @@ struct ServiceConfig: Codable, Identifiable {
     }
 }
 
+// MARK: - Service Action
+
+enum ServiceAction: Equatable {
+    case starting
+    case stopping
+    case restarting
+    case killingAndRestarting
+}
+
+// MARK: - Service Info (Lightweight ViewModel)
+
+struct ServiceInfo: Identifiable, Equatable, Hashable {
+    let id: UUID
+    let name: String
+    let isRunning: Bool
+    let isExternallyManaged: Bool
+    let hasPortConflict: Bool
+    let processingAction: ServiceAction?
+    let port: Int?
+    let workingDirectory: String
+    let command: String
+}
+
 // MARK: - Log Entry
 
 struct LogEntry: Identifiable {

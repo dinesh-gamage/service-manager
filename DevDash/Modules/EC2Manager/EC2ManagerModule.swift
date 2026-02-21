@@ -57,8 +57,16 @@ class EC2ManagerState: ObservableObject {
     @Published var healthCheckInstance: EC2Instance?
     @Published var healthCheckData: [String: Any]?
 
+    private var cancellables = Set<AnyCancellable>()
+
     private init() {
         self.manager = InstanceGroupManager(alertQueue: alertQueue, toastQueue: toastQueue)
+
+        // Forward manager changes to state so sidebar updates
+        manager.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
+        .store(in: &cancellables)
     }
 }
 
@@ -92,8 +100,7 @@ struct EC2ManagerSidebarView: View {
                 buttonIcon: "plus",
                 buttonAction: { state.showingAddGroup = true }
             ),
-            selectedItem: $state.selectedGroup,
-            refreshTrigger: state.manager.listRefreshTrigger
+            selectedItem: $state.selectedGroup
         ) { group, isSelected in
             let recentCount = group.instances.filter { $0.lastKnownIP != nil && $0.fetchError == nil }.count
 

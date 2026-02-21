@@ -19,7 +19,7 @@ struct ServiceDashboardWidget: View {
             accentColor: .blue,
             onModuleTap: onModuleTap
         ) {
-            if manager.services.isEmpty {
+            if manager.servicesList.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "server.rack")
                         .font(.system(size: 48))
@@ -33,10 +33,10 @@ struct ServiceDashboardWidget: View {
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
-                        ForEach(manager.services) { service in
-                            ServiceDashboardRow(service: service)
+                        ForEach(manager.servicesList) { serviceInfo in
+                            ServiceDashboardRow(serviceInfo: serviceInfo, manager: manager)
 
-                            if service.id != manager.services.last?.id {
+                            if serviceInfo.id != manager.servicesList.last?.id {
                                 Divider()
                                     .padding(.leading, 36)
                             }
@@ -55,30 +55,31 @@ struct ServiceDashboardWidget: View {
 // MARK: - Service Dashboard Row
 
 struct ServiceDashboardRow: View {
-    @ObservedObject var service: ServiceRuntime
+    let serviceInfo: ServiceInfo
+    let manager: ServiceManager
 
     var body: some View {
         HStack(spacing: 12) {
             Circle()
-                .fill(service.isRunning ? AppTheme.statusRunning : AppTheme.statusStopped)
+                .fill(serviceInfo.isRunning ? AppTheme.statusRunning : AppTheme.statusStopped)
                 .frame(width: 8, height: 8)
 
-            Text(service.config.name)
+            Text(serviceInfo.name)
                 .font(.callout)
                 .lineLimit(1)
 
             Spacer()
 
-            if service.isRunning {
-                VariantButton(icon: "stop.fill", variant: .danger, tooltip: "Stop", isLoading: service.processingAction == .stopping) {
-                    service.stop()
+            if serviceInfo.isRunning {
+                VariantButton(icon: "stop.fill", variant: .danger, tooltip: "Stop", isLoading: serviceInfo.processingAction == .stopping) {
+                    manager.getRuntime(id: serviceInfo.id)?.stop()
                 }
-                .disabled(service.processingAction != nil)
+                .disabled(serviceInfo.processingAction != nil)
             } else {
-                VariantButton(icon: "play.fill", variant: .primary, tooltip: "Start", isLoading: service.processingAction == .starting) {
-                    service.start()
+                VariantButton(icon: "play.fill", variant: .primary, tooltip: "Start", isLoading: serviceInfo.processingAction == .starting) {
+                    manager.getRuntime(id: serviceInfo.id)?.start()
                 }
-                .disabled(service.processingAction != nil)
+                .disabled(serviceInfo.processingAction != nil)
             }
         }
         .padding(.horizontal, 16)

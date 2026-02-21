@@ -42,12 +42,18 @@ class ProcessEnvironment {
             process.waitUntilExit()
 
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
+
+            // Explicitly close pipe to release file handle immediately
+            try? pipe.fileHandleForReading.close()
+
             if let path = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
                !path.isEmpty {
                 cachedUserPath = path
                 return path
             }
         } catch {
+            // Ensure pipe is closed even on error
+            try? pipe.fileHandleForReading.close()
             // Fall back to ProcessInfo if discovery fails
         }
 

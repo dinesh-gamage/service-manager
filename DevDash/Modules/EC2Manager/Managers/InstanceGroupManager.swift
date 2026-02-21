@@ -18,11 +18,15 @@ class InstanceGroupManager: ObservableObject {
     @Published var isCheckingHealth: [UUID: Bool] = [:]
     @Published var instanceOutputs: [UUID: CommandOutputViewModel] = [:]
     @Published var instanceHealthData: [UUID: [String: Any]] = [:]
-    @Published var listRefreshTrigger = UUID()
     @Published private(set) var isLoading = false
 
     private weak var alertQueue: AlertQueue?
     private weak var toastQueue: ToastQueue?
+
+    // Store running tasks for cancellation
+    private var fetchTasks: [UUID: Task<Void, Never>] = [:]
+    private var restartTasks: [UUID: Task<Void, Never>] = [:]
+    private var healthCheckTasks: [UUID: Task<Void, Never>] = [:]
 
     init(alertQueue: AlertQueue? = nil, toastQueue: ToastQueue? = nil) {
         self.alertQueue = alertQueue
@@ -50,18 +54,17 @@ class InstanceGroupManager: ObservableObject {
             if EC2ManagerState.shared.selectedGroup?.id == groupId {
                 EC2ManagerState.shared.selectedGroup = groups[groupIndex]
             }
-
-            listRefreshTrigger = UUID()
-            objectWillChange.send()
         }
     }
 
     func fetchInstanceIP(group: InstanceGroup, instance: EC2Instance) {
+        // Cancel existing fetch task for this instance
+        fetchTasks[instance.id]?.cancel()
+
         // Clear previous error immediately
         if let groupIndex = groups.firstIndex(where: { $0.id == group.id }),
            let instanceIndex = groups[groupIndex].instances.firstIndex(where: { $0.id == instance.id }) {
             groups[groupIndex].instances[instanceIndex].fetchError = nil
-            objectWillChange.send()
         }
 
         isFetching[instance.id] = true
@@ -72,7 +75,7 @@ class InstanceGroupManager: ObservableObject {
             instanceOutputs[instance.id] = outputViewModel
         }
 
-        Task.detached(priority: .userInitiated) {
+        let task = Task.detached(priority: .userInitiated) {
             let command = "aws-vault exec \(group.awsProfile) -- aws ec2 describe-instances --instance-ids \(instance.instanceId) --region \(group.region) --query 'Reservations[0].Instances[0].PublicIpAddress' --output text"
 
             let process = Process()
@@ -88,6 +91,15 @@ class InstanceGroupManager: ObservableObject {
             do {
                 try process.run()
                 process.waitUntilExit()
+
+                // Check if task was cancelled
+                guard !Task.isCancelled else {
+                    await MainActor.run {
+                        self.isFetching[instance.id] = false
+                        self.fetchTasks.removeValue(forKey: instance.id)
+                    }
+                    return
+                }
 
                 let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
                 let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
@@ -125,6 +137,7 @@ class InstanceGroupManager: ObservableObject {
                         self.updateInstance(group.id, instanceId: instance.id, ip: nil, fetchedDate: Date(), error: "Failed to fetch IP")
                     }
                     self.isFetching[instance.id] = false
+                    self.fetchTasks.removeValue(forKey: instance.id)
                 }
             } catch {
                 let errorLog = "[Command] \(command)\n\n[Error] \(error.localizedDescription)\n"
@@ -132,17 +145,23 @@ class InstanceGroupManager: ObservableObject {
                     outputViewModel.setLogs(errorLog)
                     self.updateInstance(group.id, instanceId: instance.id, ip: nil, fetchedDate: Date(), error: "Process error: \(error.localizedDescription)")
                     self.isFetching[instance.id] = false
+                    self.fetchTasks.removeValue(forKey: instance.id)
                 }
             }
         }
+
+        // Store task for cancellation
+        fetchTasks[instance.id] = task
     }
 
     func restartInstance(group: InstanceGroup, instance: EC2Instance) {
+        // Cancel existing restart task for this instance
+        restartTasks[instance.id]?.cancel()
+
         // Clear previous error immediately
         if let groupIndex = groups.firstIndex(where: { $0.id == group.id }),
            let instanceIndex = groups[groupIndex].instances.firstIndex(where: { $0.id == instance.id }) {
             groups[groupIndex].instances[instanceIndex].fetchError = nil
-            objectWillChange.send()
         }
 
         isRestarting[instance.id] = true
@@ -153,7 +172,7 @@ class InstanceGroupManager: ObservableObject {
             instanceOutputs[instance.id] = outputViewModel
         }
 
-        Task.detached(priority: .userInitiated) {
+        let task = Task.detached(priority: .userInitiated) {
             let instanceId = instance.instanceId
             let region = group.region
             let profile = group.awsProfile
@@ -183,6 +202,15 @@ class InstanceGroupManager: ObservableObject {
                 let stopOut = String(data: stopOutputData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 let stopErr = String(data: stopErrorData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
+                // Check if task was cancelled
+                guard !Task.isCancelled else {
+                    await MainActor.run {
+                        self.isRestarting[instance.id] = false
+                        self.restartTasks.removeValue(forKey: instance.id)
+                    }
+                    return
+                }
+
                 if stopProcess.terminationStatus != 0 {
                     fullLog += "[Stop Failed] Exit code: \(stopProcess.terminationStatus)\n"
                     if !stopErr.isEmpty { fullLog += "\(stopErr)\n" }
@@ -190,6 +218,7 @@ class InstanceGroupManager: ObservableObject {
                         outputViewModel.setLogs(fullLog)
                         self.updateInstance(group.id, instanceId: instance.id, ip: nil, fetchedDate: Date(), error: "Failed to stop instance")
                         self.isRestarting[instance.id] = false
+                        self.restartTasks.removeValue(forKey: instance.id)
                     }
                     return
                 }
@@ -236,6 +265,15 @@ class InstanceGroupManager: ObservableObject {
                 let startOut = String(data: startOutputData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 let startErr = String(data: startErrorData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
+                // Check if task was cancelled
+                guard !Task.isCancelled else {
+                    await MainActor.run {
+                        self.isRestarting[instance.id] = false
+                        self.restartTasks.removeValue(forKey: instance.id)
+                    }
+                    return
+                }
+
                 if startProcess.terminationStatus != 0 {
                     fullLog += "[Start Failed] Exit code: \(startProcess.terminationStatus)\n"
                     if !startErr.isEmpty { fullLog += "\(startErr)\n" }
@@ -243,6 +281,7 @@ class InstanceGroupManager: ObservableObject {
                         outputViewModel.setLogs(fullLog)
                         self.updateInstance(group.id, instanceId: instance.id, ip: nil, fetchedDate: Date(), error: "Failed to start instance")
                         self.isRestarting[instance.id] = false
+                        self.restartTasks.removeValue(forKey: instance.id)
                     }
                     return
                 }
@@ -291,6 +330,7 @@ class InstanceGroupManager: ObservableObject {
                     outputViewModel.setLogs(fullLog)
                     self.updateInstance(group.id, instanceId: instance.id, ip: newIP, fetchedDate: Date(), error: nil)
                     self.isRestarting[instance.id] = false
+                    self.restartTasks.removeValue(forKey: instance.id)
                     self.toastQueue?.enqueue(message: "'\(instance.name)' restarted successfully")
                 }
             } catch {
@@ -299,12 +339,19 @@ class InstanceGroupManager: ObservableObject {
                     outputViewModel.setLogs(fullLog)
                     self.updateInstance(group.id, instanceId: instance.id, ip: nil, fetchedDate: Date(), error: "Restart failed: \(error.localizedDescription)")
                     self.isRestarting[instance.id] = false
+                    self.restartTasks.removeValue(forKey: instance.id)
                 }
             }
         }
+
+        // Store task for cancellation
+        restartTasks[instance.id] = task
     }
 
     func checkInstanceHealth(group: InstanceGroup, instance: EC2Instance, completion: @escaping ([String: Any]?) -> Void) {
+        // Cancel existing health check task for this instance
+        healthCheckTasks[instance.id]?.cancel()
+
         isCheckingHealth[instance.id] = true
 
         // Create or get output view model for this instance
@@ -313,7 +360,7 @@ class InstanceGroupManager: ObservableObject {
             instanceOutputs[instance.id] = outputViewModel
         }
 
-        Task.detached(priority: .userInitiated) {
+        let task = Task.detached(priority: .userInitiated) {
             let command = "aws-vault exec \(group.awsProfile) -- aws ec2 describe-instance-status --instance-ids \(instance.instanceId) --region \(group.region) --include-all-instances"
 
             let process = Process()
@@ -329,6 +376,16 @@ class InstanceGroupManager: ObservableObject {
             do {
                 try process.run()
                 process.waitUntilExit()
+
+                // Check if task was cancelled
+                guard !Task.isCancelled else {
+                    await MainActor.run {
+                        self.isCheckingHealth[instance.id] = false
+                        self.healthCheckTasks.removeValue(forKey: instance.id)
+                        completion(nil)
+                    }
+                    return
+                }
 
                 let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
                 let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
@@ -361,6 +418,7 @@ class InstanceGroupManager: ObservableObject {
                 await MainActor.run {
                     outputViewModel.setLogs(fullLog)
                     self.isCheckingHealth[instance.id] = false
+                    self.healthCheckTasks.removeValue(forKey: instance.id)
 
                     // Store health data temporarily (session only)
                     if let parsedData = parsedData {
@@ -374,10 +432,14 @@ class InstanceGroupManager: ObservableObject {
                 await MainActor.run {
                     outputViewModel.setLogs(errorLog)
                     self.isCheckingHealth[instance.id] = false
+                    self.healthCheckTasks.removeValue(forKey: instance.id)
                     completion(nil)
                 }
             }
         }
+
+        // Store task for cancellation
+        healthCheckTasks[instance.id] = task
     }
 
     // MARK: - Group CRUD
@@ -386,7 +448,6 @@ class InstanceGroupManager: ObservableObject {
         groups.append(group)
         saveGroups()
         toastQueue?.enqueue(message: "'\(group.name)' added")
-        listRefreshTrigger = UUID()
     }
 
     func updateGroup(groupId: UUID, newGroup: InstanceGroup) {
@@ -399,16 +460,12 @@ class InstanceGroupManager: ObservableObject {
             if EC2ManagerState.shared.selectedGroup?.id == groupId {
                 EC2ManagerState.shared.selectedGroup = newGroup
             }
-
-            listRefreshTrigger = UUID()
-            objectWillChange.send()
         }
     }
 
     func deleteGroup(at offsets: IndexSet) {
         groups.remove(atOffsets: offsets)
         saveGroups()
-        listRefreshTrigger = UUID()
     }
 
     // MARK: - Instance CRUD
@@ -417,7 +474,6 @@ class InstanceGroupManager: ObservableObject {
         if let index = groups.firstIndex(where: { $0.id == groupId }) {
             groups[index].instances.append(instance)
             saveGroups()
-            listRefreshTrigger = UUID()
         }
     }
 
@@ -426,7 +482,6 @@ class InstanceGroupManager: ObservableObject {
            let instanceIndex = groups[groupIndex].instances.firstIndex(where: { $0.id == instanceId }) {
             groups[groupIndex].instances[instanceIndex] = newInstance
             saveGroups()
-            listRefreshTrigger = UUID()
         }
     }
 
@@ -435,7 +490,6 @@ class InstanceGroupManager: ObservableObject {
            let instanceIndex = groups[groupIndex].instances.firstIndex(where: { $0.id == instanceId }) {
             groups[groupIndex].instances.remove(at: instanceIndex)
             saveGroups()
-            listRefreshTrigger = UUID()
         }
     }
 

@@ -112,8 +112,7 @@ struct AWSVaultManagerSidebarView: View {
                 buttonIcon: "plus",
                 buttonAction: { state.showingAddProfile = true }
             ),
-            selectedItem: $state.selectedProfile,
-            refreshTrigger: state.manager.listRefreshTrigger
+            selectedItem: $state.selectedProfile
         ) { profile, isSelected in
             return ModuleSidebarListItem(
                 icon: .image(systemName: "key.horizontal.fill", color: .accentColor),

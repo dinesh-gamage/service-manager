@@ -8,7 +8,7 @@
 import SwiftUI
 
 struct ServiceListItem: View {
-    @ObservedObject var service: ServiceRuntime
+    let serviceInfo: ServiceInfo
     let isSelected: Bool
     var onDelete: () -> Void
     var onEdit: () -> Void
@@ -21,10 +21,10 @@ struct ServiceListItem: View {
     var body: some View {
         HStack(spacing: 10) {
             Circle()
-                .fill(service.isRunning ? AppTheme.statusRunning : AppTheme.statusStopped)
+                .fill(serviceInfo.isRunning ? AppTheme.statusRunning : AppTheme.statusStopped)
                 .frame(width: 8, height: 8)
 
-            Text(service.config.name)
+            Text(serviceInfo.name)
                 .font(AppTheme.h3)
 
             Spacer()

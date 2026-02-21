@@ -96,9 +96,28 @@ struct JSONEditorView: View {
         }
 
         // Replace all services with new ones
-        manager.services = configs.map { ServiceRuntime(config: $0) }
-        manager.saveServices()
-        manager.objectWillChange.send()
+        // This is a private workaround for JSON editor - normally wouldn't directly access internals
+        // but JSONEditor needs to replace everything at once
+        for config in configs {
+            if manager.getRuntime(id: config.id) == nil {
+                manager.addService(config)
+            } else {
+                if let existingRuntime = manager.getRuntime(id: config.id) {
+                    manager.updateService(existingRuntime, with: config)
+                }
+            }
+        }
+
+        // Remove services that are no longer in the JSON
+        let newIds = Set(configs.map { $0.id })
+        let existingIds = Set(manager.services.map { $0.id })
+        let idsToRemove = existingIds.subtracting(newIds)
+
+        for idToRemove in idsToRemove {
+            if let index = manager.servicesList.firstIndex(where: { $0.id == idToRemove }) {
+                manager.deleteService(at: IndexSet(integer: index))
+            }
+        }
 
         dismiss()
     }

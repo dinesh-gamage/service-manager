@@ -9,13 +9,6 @@ import Foundation
 import SwiftUI
 import Combine
 
-enum ServiceAction {
-    case starting
-    case stopping
-    case restarting
-    case killingAndRestarting
-}
-
 @MainActor
 class ServiceRuntime: ObservableObject, Identifiable, Hashable, OutputViewDataSource {
 
@@ -41,6 +34,12 @@ class ServiceRuntime: ObservableObject, Identifiable, Hashable, OutputViewDataSo
     private var logBuffer = ""
     private var flushTimer: DispatchSourceTimer?
 
+    // Store prerequisite task for cancellation
+    private var prerequisiteTask: Task<Void, Never>?
+
+    // Track if logs need rebuilding (optimization to avoid rebuilding on every flush)
+    private var logsNeedRebuild = false
+
     // Flag set when "EADDRINUSE" is seen in a chunk (avoids full log scan at termination)
     private var seenEADDRINUSE = false
 
@@ -58,6 +57,7 @@ class ServiceRuntime: ObservableObject, Identifiable, Hashable, OutputViewDataSo
 
     deinit {
         // Clean up resources - must happen synchronously in deinit
+        prerequisiteTask?.cancel()
         flushTimer?.cancel()
         flushTimer = nil
         pipe?.fileHandleForReading.readabilityHandler = nil
@@ -118,7 +118,8 @@ class ServiceRuntime: ObservableObject, Identifiable, Hashable, OutputViewDataSo
                 )
                 errors.append(entry)
                 if errors.count > Self.maxEntries {
-                    errors.removeFirst(errors.count - Self.trimToEntries)
+                    // Use array slicing instead of removeFirst for better performance
+                    errors = Array(errors.suffix(Self.trimToEntries))
                 }
                 collectingStackTrace = true
                 currentStackTrace = []
@@ -138,7 +139,8 @@ class ServiceRuntime: ObservableObject, Identifiable, Hashable, OutputViewDataSo
                 )
                 warnings.append(entry)
                 if warnings.count > Self.maxEntries {
-                    warnings.removeFirst(warnings.count - Self.trimToEntries)
+                    // Use array slicing instead of removeFirst for better performance
+                    warnings = Array(warnings.suffix(Self.trimToEntries))
                 }
                 return
             }
@@ -165,7 +167,15 @@ class ServiceRuntime: ObservableObject, Identifiable, Hashable, OutputViewDataSo
     }
 
     private func flushLogBuffer() {
-        guard !logBuffer.isEmpty else { return }
+        guard !logBuffer.isEmpty else {
+            // If logs need rebuilding but buffer is empty, rebuild now
+            if logsNeedRebuild {
+                logs = logLines.joined(separator: "\n")
+                logsNeedRebuild = false
+            }
+            return
+        }
+
         let chunk = logBuffer
         logBuffer = ""
 
@@ -176,18 +186,26 @@ class ServiceRuntime: ObservableObject, Identifiable, Hashable, OutputViewDataSo
 
         // Parse new lines and add to ring buffer
         let lines = chunk.components(separatedBy: .newlines)
+        var hasNewLines = false
+
         for line in lines where !line.isEmpty {
             parseLine(line)
 
             // Add to ring buffer with proactive trimming
             logLines.append(line)
+            hasNewLines = true
+
             if logLines.count > maxBufferLines {
-                logLines.removeFirst(logLines.count - maxBufferLines)
+                // Use array slicing instead of removeFirst for better performance
+                logLines = Array(logLines.suffix(maxBufferLines))
             }
         }
 
-        // Rebuild logs string from ring buffer (only when publishing)
-        logs = logLines.joined(separator: "\n")
+        // Only rebuild logs string if we actually added lines
+        if hasNewLines {
+            logs = logLines.joined(separator: "\n")
+            logsNeedRebuild = false
+        }
     }
 
     // Start the service
@@ -207,13 +225,24 @@ class ServiceRuntime: ObservableObject, Identifiable, Hashable, OutputViewDataSo
 
         let config = self.config
 
-        Task {
+        prerequisiteTask = Task {
             // Execute prerequisites off main
             let prereqs = config.prerequisites ?? []
             if !prereqs.isEmpty {
+                // Check if cancelled before starting
+                guard !Task.isCancelled else {
+                    await MainActor.run { self.processingAction = nil }
+                    return
+                }
                 await MainActor.run { self.logs += "[Prerequisites] Running \(prereqs.count) prerequisite command(s)\n" }
 
                 for (index, prereq) in prereqs.enumerated() {
+                    // Check if cancelled between prerequisites
+                    guard !Task.isCancelled else {
+                        await MainActor.run { self.processingAction = nil }
+                        return
+                    }
+
                     await MainActor.run { self.logs += "[Prerequisites] [\(index + 1)/\(prereqs.count)] Running: \(prereq.command)\n" }
 
                     let result = await Task.detached(priority: .userInitiated) { () -> (Int32, String) in
@@ -256,8 +285,20 @@ class ServiceRuntime: ObservableObject, Identifiable, Hashable, OutputViewDataSo
                     if prereq.delay > 0 {
                         await MainActor.run { self.logs += "[Prerequisites] Waiting \(prereq.delay)s before continuing...\n" }
                         try? await Task.sleep(nanoseconds: UInt64(prereq.delay) * 1_000_000_000)
+
+                        // Check if cancelled during delay
+                        guard !Task.isCancelled else {
+                            await MainActor.run { self.processingAction = nil }
+                            return
+                        }
                     }
                 }
+            }
+
+            // Check if cancelled before port check
+            guard !Task.isCancelled else {
+                await MainActor.run { self.processingAction = nil }
+                return
             }
 
             // Check port before starting
@@ -498,6 +539,10 @@ class ServiceRuntime: ObservableObject, Identifiable, Hashable, OutputViewDataSo
 
     // Stop the service
     func stop() {
+        // Cancel any running prerequisite tasks
+        prerequisiteTask?.cancel()
+        prerequisiteTask = nil
+
         processingAction = .stopping
         stopFlushTimer()
         pipe?.fileHandleForReading.readabilityHandler = nil

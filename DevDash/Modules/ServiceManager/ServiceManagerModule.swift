@@ -41,8 +41,16 @@ class ServiceManagerState: ObservableObject {
     @Published var serviceToDelete: ServiceRuntime?
     @Published var showingDeleteConfirmation = false
 
+    private var cancellables = Set<AnyCancellable>()
+
     private init() {
         self.manager = ServiceManager(alertQueue: alertQueue, toastQueue: toastQueue)
+
+        // Forward manager changes to state so sidebar updates
+        manager.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
+        .store(in: &cancellables)
     }
 }
 
@@ -79,7 +87,7 @@ struct ServiceManagerSidebarView: View {
             Divider()
 
             // List or empty state
-            if state.manager.services.isEmpty {
+            if state.manager.servicesList.isEmpty {
                 VStack(spacing: 12) {
                     Image(systemName: "gearshape.2")
                         .font(.system(size: 48))
@@ -101,21 +109,28 @@ struct ServiceManagerSidebarView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List {
-                    ForEach(state.manager.services) { service in
+                    ForEach(state.manager.servicesList) { serviceInfo in
                         ServiceListItem(
-                            service: service,
-                            isSelected: state.selectedService?.id == service.id,
+                            serviceInfo: serviceInfo,
+                            isSelected: state.selectedService?.id == serviceInfo.id,
                             onDelete: {
-                                state.serviceToDelete = service
-                                state.showingDeleteConfirmation = true
+                                // Get full runtime for deletion
+                                if let runtime = state.manager.getRuntime(id: serviceInfo.id) {
+                                    state.serviceToDelete = runtime
+                                    state.showingDeleteConfirmation = true
+                                }
                             },
                             onEdit: {
-                                state.serviceToEdit = service
-                                state.showingEditService = true
+                                // Get full runtime for editing
+                                if let runtime = state.manager.getRuntime(id: serviceInfo.id) {
+                                    state.serviceToEdit = runtime
+                                    state.showingEditService = true
+                                }
                             }
                         )
                         .onTapGesture {
-                            state.selectedService = service
+                            // Get full runtime when selected
+                            state.selectedService = state.manager.getRuntime(id: serviceInfo.id)
                         }
                     }
                 }
@@ -140,10 +155,10 @@ struct ServiceManagerSidebarView: View {
             }
             Button("Delete", role: .destructive) {
                 if let service = state.serviceToDelete,
-                   let index = state.manager.services.firstIndex(where: { $0.id == service.id }) {
+                   let index = state.manager.servicesList.firstIndex(where: { $0.id == service.id }) {
                     let serviceName = service.config.name
                     // Clear selection if deleting selected service
-                    if state.selectedService == service {
+                    if state.selectedService?.id == service.id {
                         state.selectedService = nil
                     }
                     state.manager.deleteService(at: IndexSet(integer: index))
