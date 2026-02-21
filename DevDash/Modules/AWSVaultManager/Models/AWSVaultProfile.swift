@@ -14,13 +14,15 @@ struct AWSVaultProfile: Identifiable, Codable, Equatable {
     var description: String?
     let createdAt: Date
     var lastModified: Date
+    var awsVaultBinaryHash: String? // SHA256 hash of aws-vault binary used to create credentials
 
-    init(id: UUID = UUID(), name: String, region: String? = nil, description: String? = nil) {
+    init(id: UUID = UUID(), name: String, region: String? = nil, description: String? = nil, awsVaultBinaryHash: String? = nil) {
         self.id = id
         self.name = name
         self.region = region
         self.description = description
         self.createdAt = Date()
         self.lastModified = Date()
+        self.awsVaultBinaryHash = awsVaultBinaryHash
     }
 }

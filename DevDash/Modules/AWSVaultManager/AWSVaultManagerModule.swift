@@ -166,8 +166,26 @@ struct AWSVaultManagerSidebarView: View {
             }
         }
         .alert("Keychain Health Check", isPresented: $state.showingHealthCheck) {
-            Button("OK", role: .cancel) {
-                state.healthCheckResult = nil
+            if let result = state.healthCheckResult {
+                if result.hasVersionMismatch || (!result.canAccess && result.keychainExists) {
+                    Button("Recreate Keychain") {
+                        Task {
+                            let (success, message) = await state.manager.recreateKeychainWithMigration()
+                            state.alertQueue.enqueue(
+                                title: success ? "Success" : "Error",
+                                message: message
+                            )
+                            state.healthCheckResult = nil
+                        }
+                    }
+                }
+                Button("OK", role: .cancel) {
+                    state.healthCheckResult = nil
+                }
+            } else {
+                Button("OK", role: .cancel) {
+                    state.healthCheckResult = nil
+                }
             }
         } message: {
             if let result = state.healthCheckResult {
@@ -175,7 +193,7 @@ struct AWSVaultManagerSidebarView: View {
                     if !result.keychainExists {
                         Text(result.errorMessage ?? "Keychain not created yet")
                     } else {
-                        Text("✅ AWS Vault keychain is healthy!\n\n• Keychain exists\n• In search list\n• Access working")
+                        Text("✅ AWS Vault keychain is healthy!\n\n• Keychain exists\n• In search list\n• Access working\n• No version mismatches")
                     }
                 } else {
                     VStack(alignment: .leading, spacing: 8) {

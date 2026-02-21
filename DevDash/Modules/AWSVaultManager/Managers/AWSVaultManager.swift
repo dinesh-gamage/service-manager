@@ -37,13 +37,18 @@ class AWSVaultManager: ObservableObject {
         isLoading = true
 
         do {
+            var updatedProfile = profile
+
             // If credentials provided, add to aws-vault
             if let accessKeyId = accessKeyId, let secretAccessKey = secretAccessKey {
                 try await addToAWSVault(profile: profile, accessKeyId: accessKeyId, secretAccessKey: secretAccessKey)
+
+                // Store the current aws-vault binary hash
+                updatedProfile.awsVaultBinaryHash = await getCurrentAWSVaultBinaryHash()
             }
 
             // Add to local storage
-            profiles.append(profile)
+            profiles.append(updatedProfile)
             saveProfiles()
             listRefreshTrigger = UUID()
 
@@ -58,18 +63,22 @@ class AWSVaultManager: ObservableObject {
         isLoading = true
 
         do {
+            var updatedProfile = profile
+            updatedProfile.lastModified = Date()
+
             // If credentials provided, update in aws-vault
             if let accessKeyId = accessKeyId, let secretAccessKey = secretAccessKey {
                 // Remove old profile from aws-vault
                 try await removeFromAWSVault(profileName: profile.name)
                 // Add with new credentials
                 try await addToAWSVault(profile: profile, accessKeyId: accessKeyId, secretAccessKey: secretAccessKey)
+
+                // Update the binary hash since credentials were re-added
+                updatedProfile.awsVaultBinaryHash = await getCurrentAWSVaultBinaryHash()
             }
 
             // Update in local storage
             if let index = profiles.firstIndex(where: { $0.id == profile.id }) {
-                var updatedProfile = profile
-                updatedProfile.lastModified = Date()
                 profiles[index] = updatedProfile
                 saveProfiles()
                 listRefreshTrigger = UUID()
@@ -184,7 +193,7 @@ class AWSVaultManager: ObservableObject {
     func listAWSVaultProfiles() async throws -> [String] {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        process.arguments = ["-c", "aws-vault list --profiles"]
+        process.arguments = ["-c", "aws-vault list"]
         process.environment = ProcessEnvironment.shared.getEnvironment()
 
         let outputPipe = Pipe()
@@ -204,10 +213,41 @@ class AWSVaultManager: ObservableObject {
         let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
         let output = String(data: outputData, encoding: .utf8) ?? ""
 
-        // Parse profile names from output
-        return output.components(separatedBy: .newlines)
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
+        // Parse table output to get profiles WITH credentials
+        // Format:
+        // Profile                  Credentials              Sessions
+        // =======                  ===========              ========
+        // lucy-saas                lucy-saas                -
+        // ivivacloud               -                        -
+        //
+        // We only want profiles where Credentials column is NOT "-"
+
+        var profilesWithCredentials: [String] = []
+        let lines = output.components(separatedBy: .newlines)
+
+        for (index, line) in lines.enumerated() {
+            // Skip header and separator lines
+            if index < 2 || line.trimmingCharacters(in: .whitespaces).isEmpty {
+                continue
+            }
+
+            // Split by whitespace and filter empty strings
+            let columns = line.split(separator: " ", omittingEmptySubsequences: true)
+                .map { String($0) }
+
+            // Need at least 2 columns: Profile and Credentials
+            guard columns.count >= 2 else { continue }
+
+            let profileName = columns[0]
+            let credentials = columns[1]
+
+            // Only include profiles that have credentials (credentials column != "-")
+            if credentials != "-" {
+                profilesWithCredentials.append(profileName)
+            }
+        }
+
+        return profilesWithCredentials
     }
 
     // MARK: - Sync
@@ -242,6 +282,8 @@ class AWSVaultManager: ObservableObject {
         let keychainExists: Bool
         let isInSearchList: Bool
         let canAccess: Bool
+        let hasVersionMismatch: Bool
+        let mismatchedProfiles: [String]
         let errorMessage: String?
         let recommendation: String?
     }
@@ -257,10 +299,15 @@ class AWSVaultManager: ObservableObject {
                 keychainExists: false,
                 isInSearchList: false,
                 canAccess: false,
+                hasVersionMismatch: false,
+                mismatchedProfiles: [],
                 errorMessage: "AWS Vault keychain does not exist yet",
                 recommendation: "Add your first profile using the '+ Add Profile' button to create the keychain."
             )
         }
+
+        // Get current aws-vault binary hash
+        let currentHash = await getCurrentAWSVaultBinaryHash()
 
         // Check if keychain is in search list
         let listProcess = Process()
@@ -284,6 +331,8 @@ class AWSVaultManager: ObservableObject {
                     keychainExists: true,
                     isInSearchList: false,
                     canAccess: false,
+                    hasVersionMismatch: false,
+                    mismatchedProfiles: [],
                     errorMessage: "AWS Vault keychain exists but is not in the keychain search list",
                     recommendation: "Run this command in Terminal:\nsecurity list-keychains -d user -s ~/Library/Keychains/login.keychain-db ~/Library/Keychains/aws-vault.keychain-db"
                 )
@@ -294,6 +343,8 @@ class AWSVaultManager: ObservableObject {
                 keychainExists: true,
                 isInSearchList: false,
                 canAccess: false,
+                hasVersionMismatch: false,
+                mismatchedProfiles: [],
                 errorMessage: "Failed to check keychain search list: \(error.localizedDescription)",
                 recommendation: nil
             )
@@ -303,12 +354,41 @@ class AWSVaultManager: ObservableObject {
         do {
             _ = try await listAWSVaultProfiles()
 
+            // Check for version mismatches
+            var mismatchedProfiles: [String] = []
+            if let currentHash = currentHash {
+                for profile in profiles {
+                    // Only check profiles that have credentials
+                    if let storedHash = profile.awsVaultBinaryHash,
+                       storedHash != currentHash {
+                        mismatchedProfiles.append(profile.name)
+                    }
+                }
+            }
+
+            let hasVersionMismatch = !mismatchedProfiles.isEmpty
+
+            if hasVersionMismatch {
+                return KeychainHealthStatus(
+                    isHealthy: false,
+                    keychainExists: true,
+                    isInSearchList: true,
+                    canAccess: true,
+                    hasVersionMismatch: true,
+                    mismatchedProfiles: mismatchedProfiles,
+                    errorMessage: "AWS Vault binary has been updated since these profiles were created.",
+                    recommendation: "Profile(s) affected: \(mismatchedProfiles.joined(separator: ", "))\n\nThis may cause permission errors. Click 'Recreate Keychain' to fix this automatically."
+                )
+            }
+
             // All checks passed
             return KeychainHealthStatus(
                 isHealthy: true,
                 keychainExists: true,
                 isInSearchList: true,
                 canAccess: true,
+                hasVersionMismatch: false,
+                mismatchedProfiles: [],
                 errorMessage: nil,
                 recommendation: nil
             )
@@ -322,8 +402,10 @@ class AWSVaultManager: ObservableObject {
                     keychainExists: true,
                     isInSearchList: true,
                     canAccess: false,
+                    hasVersionMismatch: false,
+                    mismatchedProfiles: [],
                     errorMessage: "Keychain permission error detected (Code -25244). This usually happens after aws-vault updates.",
-                    recommendation: "Delete and recreate the keychain:\n\n1. Run in Terminal:\n   rm ~/Library/Keychains/aws-vault.keychain-db\n\n2. Re-add your profiles:\n   aws-vault add <profile-name>\n\nYou'll need to re-enter your AWS credentials."
+                    recommendation: "Delete and recreate the keychain:\n\n1. Run in Terminal:\n   rm ~/Library/Keychains/aws-vault.keychain-db\n\n2. Re-add your profiles:\n   aws-vault add <profile-name>\n\nYou'll need to re-enter your AWS credentials.\n\nOr use the 'Recreate Keychain' button for automatic migration."
                 )
             }
 
@@ -332,10 +414,137 @@ class AWSVaultManager: ObservableObject {
                 keychainExists: true,
                 isInSearchList: true,
                 canAccess: false,
+                hasVersionMismatch: false,
+                mismatchedProfiles: [],
                 errorMessage: "Failed to access keychain: \(errorMsg)",
                 recommendation: "Try running 'aws-vault list' in Terminal to diagnose the issue."
             )
         }
+    }
+
+    // MARK: - Keychain Recreation
+
+    func recreateKeychainWithMigration() async -> (success: Bool, message: String) {
+        isLoading = true
+
+        // Step 1: Export all credentials from keychain
+        var credentialsMap: [String: (accessKeyId: String, secretAccessKey: String)] = [:]
+
+        for profile in profiles {
+            do {
+                let creds = try retrieveCredentialsFromKeychain(profileName: profile.name)
+                credentialsMap[profile.name] = creds
+            } catch {
+                // Profile might not have credentials in keychain, skip it
+                continue
+            }
+        }
+
+        guard !credentialsMap.isEmpty else {
+            isLoading = false
+            return (false, "No credentials found in keychain to migrate.")
+        }
+
+        // Step 2: Delete the keychain file
+        let keychainPath = NSString(string: "~/Library/Keychains/aws-vault.keychain-db").expandingTildeInPath
+        let fileManager = FileManager.default
+
+        do {
+            if fileManager.fileExists(atPath: keychainPath) {
+                try fileManager.removeItem(atPath: keychainPath)
+            }
+        } catch {
+            isLoading = false
+            return (false, "Failed to delete keychain: \(error.localizedDescription)")
+        }
+
+        // Step 3: Re-add all profiles with their credentials
+        var successCount = 0
+        var failedProfiles: [String] = []
+
+        for (profileName, creds) in credentialsMap {
+            guard let profile = profiles.first(where: { $0.name == profileName }) else {
+                continue
+            }
+
+            do {
+                // Add to aws-vault
+                try await addToAWSVault(profile: profile, accessKeyId: creds.accessKeyId, secretAccessKey: creds.secretAccessKey)
+
+                // Update the profile with new binary hash
+                if let index = profiles.firstIndex(where: { $0.id == profile.id }) {
+                    profiles[index].awsVaultBinaryHash = await getCurrentAWSVaultBinaryHash()
+                    profiles[index].lastModified = Date()
+                }
+
+                successCount += 1
+            } catch {
+                failedProfiles.append(profileName)
+            }
+        }
+
+        // Save updated profiles
+        saveProfiles()
+        listRefreshTrigger = UUID()
+        isLoading = false
+
+        if failedProfiles.isEmpty {
+            return (true, "Successfully recreated keychain and migrated \(successCount) profile(s).")
+        } else {
+            return (false, "Migrated \(successCount) profile(s), but failed for: \(failedProfiles.joined(separator: ", "))")
+        }
+    }
+
+    // MARK: - AWS Vault Binary Version Tracking
+
+    func getCurrentAWSVaultBinaryHash() async -> String? {
+        // Find aws-vault binary location
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        process.arguments = ["-c", "which aws-vault"]
+        process.environment = ProcessEnvironment.shared.getEnvironment()
+
+        let outputPipe = Pipe()
+        process.standardOutput = outputPipe
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+
+            guard process.terminationStatus == 0 else { return nil }
+
+            let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
+            let binaryPath = String(data: outputData, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+
+            guard let binaryPath = binaryPath, !binaryPath.isEmpty else { return nil }
+
+            // Calculate SHA256 hash of the binary
+            return try await calculateFileSHA256(path: binaryPath)
+        } catch {
+            return nil
+        }
+    }
+
+    private func calculateFileSHA256(path: String) async throws -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/shasum")
+        process.arguments = ["-a", "256", path]
+
+        let outputPipe = Pipe()
+        process.standardOutput = outputPipe
+
+        try process.run()
+        process.waitUntilExit()
+
+        guard process.terminationStatus == 0 else { return nil }
+
+        let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
+        let output = String(data: outputData, encoding: .utf8) ?? ""
+
+        // Output format: "hash  filename"
+        let hash = output.components(separatedBy: " ").first
+        return hash
     }
 
     // MARK: - Import/Export
