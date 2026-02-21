@@ -102,9 +102,9 @@ struct ContentView: View {
                         HStack(spacing: 12) {
                             Image(systemName: "gearshape.fill")
                                 .font(.title3)
-                                .foregroundColor(.purple)
+                                .foregroundColor(.blue)
                                 .frame(width: 32, height: 32)
-                                .background(Color.purple.opacity(selectedModuleId == "settings" ? 0.2 : 0.1))
+                                .background(Color.blue.opacity(selectedModuleId == "settings" ? 0.2 : 0.1))
                                 .cornerRadius(8)
 
                             VStack(alignment: .leading, spacing: 2) {

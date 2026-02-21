@@ -12,10 +12,11 @@ struct BackupConfig: Codable {
     var s3Bucket: String
     var s3Path: String  // Path prefix in bucket (e.g., "devdash-backups/")
     var awsProfile: String  // AWS vault profile name
+    var awsRegion: String  // AWS region (e.g., "us-east-1")
 
     /// Validate configuration
     var isValid: Bool {
-        return !s3Bucket.isEmpty && !s3Path.isEmpty && !awsProfile.isEmpty
+        return !s3Bucket.isEmpty && !s3Path.isEmpty && !awsProfile.isEmpty && !awsRegion.isEmpty
     }
 
     /// Full S3 path for a backup file

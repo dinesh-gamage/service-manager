@@ -39,10 +39,54 @@ enum FileEncryptionError: Error, LocalizedError {
 class FileEncryption {
     static let shared = FileEncryption()
 
-    private let keychainService = "com.devdash.backup"
-    private let keychainAccount = "encryption-master-key"
+    private let keychainManager = KeychainManager.shared
+    private let passphraseKey = "backup-encryption-passphrase"
 
-    private init() {}
+    // Legacy keychain keys (before KeychainManager refactoring)
+    private let legacyKeychainService = "com.devdash.backup"
+    private let legacyKeychainAccount = "encryption-master-key"
+
+    private init() {
+        migrateLegacyPassphrase()
+    }
+
+    // MARK: - Migration
+
+    /// Migrate passphrase from legacy keychain location to KeychainManager
+    private func migrateLegacyPassphrase() {
+        // Check if already using new location
+        if keychainManager.exists(passphraseKey) {
+            return
+        }
+
+        // Try to load from legacy location
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: legacyKeychainService,
+            kSecAttrAccount as String: legacyKeychainAccount,
+            kSecReturnData as String: true
+        ]
+
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+
+        guard status == errSecSuccess,
+              let data = result as? Data,
+              let passphrase = String(data: data, encoding: .utf8) else {
+            return
+        }
+
+        // Migrate to new location
+        try? keychainManager.save(passphrase, for: passphraseKey)
+
+        // Delete from old location
+        let deleteQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: legacyKeychainService,
+            kSecAttrAccount as String: legacyKeychainAccount
+        ]
+        SecItemDelete(deleteQuery as CFDictionary)
+    }
 
     // MARK: - Passphrase Management
 
@@ -52,49 +96,22 @@ class FileEncryption {
             throw FileEncryptionError.weakPassphrase
         }
 
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: keychainService,
-            kSecAttrAccount as String: keychainAccount,
-            kSecValueData as String: passphrase.data(using: .utf8)!
-        ]
-
         // Delete existing passphrase if any
-        SecItemDelete(query as CFDictionary)
+        try? keychainManager.delete(passphraseKey)
 
-        // Add new passphrase
-        let status = SecItemAdd(query as CFDictionary, nil)
-
-        guard status == errSecSuccess else {
-            throw FileEncryptionError.keychainError(status)
-        }
+        // Save new passphrase using KeychainManager
+        try keychainManager.save(passphrase, for: passphraseKey)
     }
 
     /// Load passphrase from Keychain
     private func loadPassphrase() throws -> String {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: keychainService,
-            kSecAttrAccount as String: keychainAccount,
-            kSecReturnData as String: true
-        ]
-
-        var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-
-        guard status == errSecSuccess else {
-            if status == errSecItemNotFound {
-                throw FileEncryptionError.passphraseNotSet
-            }
-            throw FileEncryptionError.keychainError(status)
-        }
-
-        guard let data = result as? Data,
-              let passphrase = String(data: data, encoding: .utf8) else {
+        do {
+            return try keychainManager.retrieve(passphraseKey)
+        } catch KeychainError.itemNotFound {
+            throw FileEncryptionError.passphraseNotSet
+        } catch {
             throw FileEncryptionError.invalidData
         }
-
-        return passphrase
     }
 
     /// Derive encryption key from passphrase using PBKDF2
@@ -193,12 +210,7 @@ class FileEncryption {
 
     /// Delete passphrase from Keychain
     func deletePassphrase() {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: keychainService,
-            kSecAttrAccount as String: keychainAccount
-        ]
-        SecItemDelete(query as CFDictionary)
+        try? keychainManager.delete(passphraseKey)
     }
 }
 

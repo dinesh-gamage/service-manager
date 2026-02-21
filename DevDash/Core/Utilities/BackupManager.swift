@@ -52,6 +52,7 @@ struct BackupProgress {
     let status: String  // "Exporting...", "Encrypting...", "Uploading...", "Success", "Failed"
     let isComplete: Bool
     let error: String?
+    let progress: Double  // 0.0 to 1.0
 }
 
 @MainActor
@@ -62,6 +63,7 @@ class BackupManager: ObservableObject {
     @Published var status: BackupStatus = BackupStatus()
     @Published var isBackupInProgress = false
     @Published var currentProgress: BackupProgress?
+    @Published var moduleProgressMap: [String: BackupProgress] = [:]  // Track progress per module
 
     private let fileEncryption = FileEncryption.shared
     private let processEnvironment = ProcessEnvironment.shared
@@ -74,8 +76,15 @@ class BackupManager: ObservableObject {
     // MARK: - Config Management
 
     func loadConfig() {
+        // Try to load config
         let loaded: [BackupConfig]? = StorageManager.shared.load(forKey: "backupConfig")
         config = loaded?.first
+
+        // If config is nil but data exists in UserDefaults, it means decoding failed
+        // (likely old config missing awsRegion field) - clear it
+        if config == nil && UserDefaults.standard.data(forKey: "backupConfig") != nil {
+            UserDefaults.standard.removeObject(forKey: "backupConfig")
+        }
     }
 
     func saveConfig(_ newConfig: BackupConfig) {
@@ -118,28 +127,48 @@ class BackupManager: ObservableObject {
         isBackupInProgress = true
         var moduleStatuses: [ModuleBackupStatus] = []
 
+        // Initialize all modules with "Pending" state
+        moduleProgressMap.removeAll()
+        for module in modules {
+            moduleProgressMap[module.name] = BackupProgress(
+                moduleName: module.name,
+                status: "Pending...",
+                isComplete: false,
+                error: nil,
+                progress: 0.0
+            )
+        }
+
         for module in modules {
             let moduleName = module.name
 
             do {
-                // Update progress: Exporting
-                currentProgress = BackupProgress(
+                // Update progress: Exporting (25%)
+                let exportProgress = BackupProgress(
                     moduleName: moduleName,
                     status: "Exporting...",
                     isComplete: false,
-                    error: nil
+                    error: nil,
+                    progress: 0.25
                 )
+                currentProgress = exportProgress
+                moduleProgressMap[moduleName] = exportProgress
+                try await Task.sleep(nanoseconds: 300_000_000)  // 300ms delay for visibility
 
                 // Export data from module
                 let jsonData = try await module.exportForBackup()
 
-                // Update progress: Encrypting
-                currentProgress = BackupProgress(
+                // Update progress: Encrypting (50%)
+                let encryptProgress = BackupProgress(
                     moduleName: moduleName,
                     status: "Encrypting...",
                     isComplete: false,
-                    error: nil
+                    error: nil,
+                    progress: 0.50
                 )
+                currentProgress = encryptProgress
+                moduleProgressMap[moduleName] = encryptProgress
+                try await Task.sleep(nanoseconds: 300_000_000)  // 300ms delay for visibility
 
                 // Encrypt data
                 let encryptedData: Data
@@ -149,25 +178,33 @@ class BackupManager: ObservableObject {
                     throw BackupError.encryptionFailed(error)
                 }
 
-                // Update progress: Uploading
-                currentProgress = BackupProgress(
+                // Update progress: Uploading (75%)
+                let uploadProgress = BackupProgress(
                     moduleName: moduleName,
                     status: "Uploading to S3...",
                     isComplete: false,
-                    error: nil
+                    error: nil,
+                    progress: 0.75
                 )
+                currentProgress = uploadProgress
+                moduleProgressMap[moduleName] = uploadProgress
+                try await Task.sleep(nanoseconds: 300_000_000)  // 300ms delay for visibility
 
                 // Upload to S3
                 let fileName = "\(module.backupFileName).enc"
                 try await uploadToS3(data: encryptedData, fileName: fileName, config: config)
 
-                // Update progress: Success
-                currentProgress = BackupProgress(
+                // Update progress: Success (100%)
+                let successProgress = BackupProgress(
                     moduleName: moduleName,
                     status: "Success",
                     isComplete: true,
-                    error: nil
+                    error: nil,
+                    progress: 1.0
                 )
+                currentProgress = successProgress
+                moduleProgressMap[moduleName] = successProgress
+                try await Task.sleep(nanoseconds: 300_000_000)  // 300ms delay for visibility
 
                 // Record success
                 moduleStatuses.append(ModuleBackupStatus(
@@ -181,12 +218,15 @@ class BackupManager: ObservableObject {
             } catch {
                 // Update progress: Failed
                 let errorMessage = error.localizedDescription
-                currentProgress = BackupProgress(
+                let failedProgress = BackupProgress(
                     moduleName: moduleName,
                     status: "Failed",
                     isComplete: true,
-                    error: errorMessage
+                    error: errorMessage,
+                    progress: 0.0
                 )
+                currentProgress = failedProgress
+                moduleProgressMap[moduleName] = failedProgress
 
                 // Record failure
                 moduleStatuses.append(ModuleBackupStatus(
@@ -206,6 +246,7 @@ class BackupManager: ObservableObject {
 
         isBackupInProgress = false
         currentProgress = nil
+        // Keep moduleProgressMap so UI can show final states
     }
 
     /// Upload encrypted data to S3
@@ -223,9 +264,9 @@ class BackupManager: ObservableObject {
         // Build S3 path
         let s3Path = config.s3FullPath(for: fileName)
 
-        // Build aws-vault command
+        // Build aws-vault command with region (set as env var for aws-vault STS operations)
         let command = """
-        aws-vault exec \(config.awsProfile) -- aws s3 cp "\(tempFile.path)" "\(s3Path)"
+        AWS_REGION=\(config.awsRegion) aws-vault exec \(config.awsProfile) -- aws s3 cp "\(tempFile.path)" "\(s3Path)" --region \(config.awsRegion)
         """
 
         // Execute command
@@ -257,9 +298,9 @@ class BackupManager: ObservableObject {
             try? FileManager.default.removeItem(at: tempFile)
         }
 
-        // Build aws-vault command
+        // Build aws-vault command with region (set as env var for aws-vault STS operations)
         let command = """
-        aws-vault exec \(config.awsProfile) -- aws s3 cp "\(s3Path)" "\(tempFile.path)"
+        AWS_REGION=\(config.awsRegion) aws-vault exec \(config.awsProfile) -- aws s3 cp "\(s3Path)" "\(tempFile.path)" --region \(config.awsRegion)
         """
 
         // Execute command

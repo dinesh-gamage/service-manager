@@ -7,6 +7,7 @@
 
 import Foundation
 import Security
+import LocalAuthentication
 
 enum KeychainError: Error, LocalizedError {
     case duplicateItem
@@ -58,7 +59,8 @@ class KeychainManager {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: key,
-            kSecValueData as String: data
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock
         ]
 
         // Try to add the item
@@ -87,12 +89,17 @@ class KeychainManager {
 
     /// Retrieve data from keychain
     func retrieveData(_ key: String) throws -> Data {
+        // Create LAContext with interaction disabled to prevent auth prompts
+        let context = LAContext()
+        context.interactionNotAllowed = true
+
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: key,
             kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
+            kSecMatchLimit as String: kSecMatchLimitOne,
+            kSecUseAuthenticationContext as String: context
         ]
 
         var result: AnyObject?
@@ -123,7 +130,8 @@ class KeychainManager {
         ]
 
         let attributes: [String: Any] = [
-            kSecValueData as String: data
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock
         ]
 
         let status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
