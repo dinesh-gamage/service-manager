@@ -21,6 +21,8 @@ DevDash is a native macOS application built with SwiftUI for managing local deve
 
 4. **User-Friendly & Intuitive** - Design simple, clear interfaces. Provide immediate visual feedback. Make actions reversible where possible. Minimize cognitive load.
 
+5. **Event-Driven Architecture** - Follow the established event-driven pattern (detailed below). NEVER use manual refresh triggers or polling. Let SwiftUI's reactive system handle updates automatically.
+
 ## Architecture
 
 ### Modular System
@@ -129,6 +131,302 @@ Key components in `Modules/CredentialsManager/`:
 - **AddCredentialView**: Form for creating new credentials with password confirmation
 - **EditCredentialView**: Form for editing credentials with optional password update
 - **CredentialListItem**: Sidebar item with category icon and metadata
+
+### Event-Driven Architecture & State Management
+
+**CRITICAL: This pattern must be followed for all modules to prevent performance issues.**
+
+#### The Problem We Solved
+
+Initial implementation had severe performance issues:
+- **100% CPU usage** from infinite rendering loops
+- **Constant re-renders** when observing objects with frequently updating properties (logs updating 10x/second)
+- **UI not updating** when nested ObservableObject changes occurred
+- **Manual refresh hacks** using `listRefreshTrigger = UUID()` and `objectWillChange.send()`
+
+#### The Solution: Lightweight State Pattern with Event Forwarding
+
+All modules now follow this architecture:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ ModuleState (ObservableObject)                          │
+│ - Singleton, holds UI state                             │
+│ - Forwards manager.objectWillChange to self             │
+│ - Views observe this                                     │
+└──────────────────┬──────────────────────────────────────┘
+                   │
+                   ▼
+┌─────────────────────────────────────────────────────────┐
+│ Manager (ObservableObject)                              │
+│ - Publishes LIGHTWEIGHT list (ServiceInfo, not Runtime) │
+│ - Handles CRUD, persistence, import/export              │
+│ - Private full objects (with logs, processes, etc.)     │
+│ - Public lightweight snapshots for UI                   │
+└──────────────────┬──────────────────────────────────────┘
+                   │
+                   ▼
+┌─────────────────────────────────────────────────────────┐
+│ Runtime/Heavy Objects (ObservableObject)                │
+│ - Logs, processes, frequently updating data             │
+│ - NOT exposed to list views                             │
+│ - Fetched on-demand via manager.getRuntime(id)          │
+│ - Only detail views observe these                       │
+└─────────────────────────────────────────────────────────┘
+```
+
+#### Mandatory Rules
+
+**DO:**
+
+1. **Use Combine forwarding for nested ObservableObjects**:
+   ```swift
+   @MainActor
+   class ModuleState: ObservableObject {
+       @Published var manager: Manager
+       private var cancellables = Set<AnyCancellable>()
+
+       private init() {
+           self.manager = Manager(...)
+
+           // REQUIRED: Forward manager changes to state
+           manager.objectWillChange.sink { [weak self] _ in
+               self?.objectWillChange.send()
+           }
+           .store(in: &cancellables)
+       }
+   }
+   ```
+
+2. **Separate lightweight state from heavy runtime data**:
+   ```swift
+   // Lightweight - safe for list views
+   struct ServiceInfo: Identifiable {
+       let id: UUID
+       let name: String
+       let isRunning: Bool
+       let port: Int?
+       // NO logs, NO processes, NO frequently updating data
+   }
+
+   // Manager exposes lightweight list
+   @MainActor
+   class Manager: ObservableObject {
+       @Published var servicesList: [ServiceInfo] = []
+       private var runtimes: [UUID: ServiceRuntime] = [:]
+
+       func getRuntime(id: UUID) -> ServiceRuntime? {
+           return runtimes[id]
+       }
+   }
+   ```
+
+3. **Subscribe to runtime changes to auto-refresh list**:
+   ```swift
+   private func subscribeToRuntime(_ runtime: ServiceRuntime) {
+       runtime.objectWillChange.sink { [weak self] _ in
+           self?.refreshServicesList()
+       }
+       .store(in: &cancellables)
+   }
+
+   func refreshServicesList() {
+       servicesList = runtimes.values.map { runtime in
+           ServiceInfo(/* map only lightweight properties */)
+       }
+   }
+   ```
+
+4. **Let @Published trigger updates automatically** - Never manually call `objectWillChange.send()` in CRUD methods
+
+5. **Use on-demand fetching for heavy data**:
+   ```swift
+   // In detail view
+   if let runtime = manager.getRuntime(id: serviceInfo.id) {
+       runtime.start()
+   }
+   ```
+
+**DO NOT:**
+
+1. ❌ **NEVER observe objects with frequently updating @Published properties in list views**:
+   ```swift
+   // WRONG - logs update 10x/second, causes constant re-renders
+   struct ServiceRow: View {
+       @ObservedObject var service: ServiceRuntime
+   }
+
+   // CORRECT - lightweight, stable data
+   struct ServiceRow: View {
+       let serviceInfo: ServiceInfo
+       let manager: ServiceManager
+   }
+   ```
+
+2. ❌ **NEVER use manual refresh triggers**:
+   ```swift
+   // WRONG
+   @Published var listRefreshTrigger = UUID()
+
+   func addItem() {
+       items.append(newItem)
+       listRefreshTrigger = UUID()  // ❌ Never do this
+       objectWillChange.send()      // ❌ Never do this
+   }
+
+   // CORRECT
+   func addItem() {
+       items.append(newItem)  // ✓ @Published triggers update
+   }
+   ```
+
+3. ❌ **NEVER create computed properties that recreate publishers**:
+   ```swift
+   // WRONG - infinite loop!
+   var servicesPublisher: AnyPublisher<Void, Never> {
+       manager.objectWillChange.eraseToAnyPublisher()
+   }
+
+   // CORRECT - use @ObservedObject
+   @ObservedObject var manager: ServiceManager
+   ```
+
+4. ❌ **NEVER pass full runtime objects to list item views**:
+   ```swift
+   // WRONG
+   ForEach(manager.services) { service in  // ❌ Full runtime
+       ServiceRow(service: service)
+   }
+
+   // CORRECT
+   ForEach(manager.servicesList) { serviceInfo in  // ✓ Lightweight
+       ServiceRow(serviceInfo: serviceInfo, manager: manager)
+   }
+   ```
+
+5. ❌ **NEVER forget to store Combine subscriptions**:
+   ```swift
+   // WRONG - subscription will be deallocated
+   manager.objectWillChange.sink { _ in
+       self?.objectWillChange.send()
+   }
+
+   // CORRECT
+   manager.objectWillChange.sink { _ in
+       self?.objectWillChange.send()
+   }
+   .store(in: &cancellables)  // ✓ Must store
+   ```
+
+#### Example: ServiceManager Architecture
+
+**ServiceInfo (Lightweight)**:
+```swift
+struct ServiceInfo: Identifiable, Equatable, Hashable {
+    let id: UUID
+    let name: String
+    let isRunning: Bool
+    let isExternallyManaged: Bool
+    let hasPortConflict: Bool
+    let processingAction: ServiceAction?
+    let port: Int?
+    let workingDirectory: String
+    let command: String
+}
+```
+
+**ServiceManager (Manager)**:
+```swift
+@MainActor
+class ServiceManager: ObservableObject {
+    @Published var servicesList: [ServiceInfo] = []  // Lightweight, public
+    private var runtimes: [UUID: ServiceRuntime] = [:]  // Heavy, private
+    private var cancellables = Set<AnyCancellable>()
+
+    func getRuntime(id: UUID) -> ServiceRuntime?
+
+    private func subscribeToRuntime(_ runtime: ServiceRuntime) {
+        runtime.objectWillChange.sink { [weak self] _ in
+            self?.refreshServicesList()
+        }.store(in: &cancellables)
+    }
+
+    func refreshServicesList() {
+        servicesList = runtimes.values.map { ServiceInfo(...) }
+    }
+}
+```
+
+**ServiceRuntime (Heavy Runtime)**:
+```swift
+@MainActor
+class ServiceRuntime: ObservableObject {
+    @Published var logs: String = ""  // Updates 10x/second
+    @Published var isRunning: Bool = false
+    // ... process, pipes, etc.
+}
+```
+
+**ServiceManagerState (Module State)**:
+```swift
+@MainActor
+class ServiceManagerState: ObservableObject {
+    static let shared = ServiceManagerState()
+    @Published var manager: ServiceManager
+    private var cancellables = Set<AnyCancellable>()
+
+    private init() {
+        self.manager = ServiceManager(...)
+
+        // Forward manager changes to state
+        manager.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }.store(in: &cancellables)
+    }
+}
+```
+
+**Views**:
+```swift
+// List view - observes lightweight state
+struct ServiceListItem: View {
+    let serviceInfo: ServiceInfo  // Lightweight
+    let manager: ServiceManager
+
+    var body: some View {
+        HStack {
+            Text(serviceInfo.name)
+            if serviceInfo.isRunning {
+                Circle().fill(.green)
+            }
+        }
+        .onTapGesture {
+            // Fetch heavy data on-demand
+            manager.getRuntime(id: serviceInfo.id)?.start()
+        }
+    }
+}
+
+// Detail view - can observe heavy runtime
+struct ServiceDetailView: View {
+    @ObservedObject var service: ServiceRuntime  // OK here
+
+    var body: some View {
+        ScrollView {
+            Text(service.logs)  // Frequent updates OK in detail view
+        }
+    }
+}
+```
+
+#### Performance Testing
+
+Before committing any state management changes:
+
+1. **Check CPU usage** with Activity Monitor or `htop`
+2. **Test import/CRUD operations** - UI must update immediately
+3. **Test with running services** - CPU should remain low
+4. **Profile memory** - No leaks after operations
 
 ### Core Infrastructure
 

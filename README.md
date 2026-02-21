@@ -72,10 +72,101 @@ DevDash/
 └── DevDashApp.swift         # App entry point
 ```
 
+### Event-Driven Architecture
+
+**All modules follow a strict event-driven pattern to ensure zero performance impact.**
+
+```
+ModuleState (UI observes this)
+    ↓ forwards objectWillChange
+Manager (exposes lightweight list)
+    ↓ subscribes to changes
+Runtime (heavy data: logs, processes)
+```
+
+**Key Principles:**
+1. **Lightweight State** - List views observe stable, lightweight data structures
+2. **Event Forwarding** - Nested ObservableObjects forward changes via Combine
+3. **On-Demand Fetching** - Heavy data (logs, processes) fetched only when needed
+4. **Automatic Updates** - `@Published` properties trigger UI updates automatically
+5. **No Manual Triggers** - Never use `listRefreshTrigger` or `objectWillChange.send()`
+
+**Why This Matters:**
+- ✅ **Low CPU Usage** - No constant re-renders from frequently updating logs
+- ✅ **Instant UI Updates** - Changes propagate automatically via reactive system
+- ✅ **Memory Efficient** - List views only hold minimal data
+- ❌ **Without this pattern** - 100% CPU usage, infinite loops, UI not updating
+
+See `CLAUDE.md` for detailed implementation rules and examples.
+
 ### Creating a New Module
 
+**IMPORTANT: Follow the event-driven architecture pattern to avoid performance issues.**
+
 1. **Create module directory**: `Modules/YourModule/`
-2. **Define module struct**:
+
+2. **Define lightweight info struct** (if module has list of items):
+   ```swift
+   struct YourItemInfo: Identifiable, Equatable, Hashable {
+       let id: UUID
+       let name: String
+       let status: String
+       // Only stable, lightweight properties
+       // NO logs, NO processes, NO frequently updating data
+   }
+   ```
+
+3. **Create manager** (handles CRUD, persistence):
+   ```swift
+   @MainActor
+   class YourManager: ObservableObject {
+       @Published var itemsList: [YourItemInfo] = []  // Public lightweight
+       private var runtimes: [UUID: YourRuntime] = [:]  // Private heavy
+       private var cancellables = Set<AnyCancellable>()
+
+       func getRuntime(id: UUID) -> YourRuntime? {
+           return runtimes[id]
+       }
+
+       private func subscribeToRuntime(_ runtime: YourRuntime) {
+           runtime.objectWillChange.sink { [weak self] _ in
+               self?.refreshItemsList()
+           }.store(in: &cancellables)
+       }
+
+       func refreshItemsList() {
+           itemsList = runtimes.values.map { YourItemInfo(...) }
+       }
+
+       func addItem(_ item: YourItem) {
+           let runtime = YourRuntime(item: item)
+           subscribeToRuntime(runtime)
+           runtimes[item.id] = runtime
+           // @Published triggers update automatically - don't call objectWillChange.send()
+       }
+   }
+   ```
+
+4. **Create module state with event forwarding**:
+   ```swift
+   @MainActor
+   class YourModuleState: ObservableObject {
+       static let shared = YourModuleState()
+       @Published var manager: YourManager
+       private var cancellables = Set<AnyCancellable>()
+
+       private init() {
+           self.manager = YourManager(...)
+
+           // REQUIRED: Forward manager changes to state
+           manager.objectWillChange.sink { [weak self] _ in
+               self?.objectWillChange.send()
+           }.store(in: &cancellables)
+       }
+   }
+   ```
+
+5. **Define module struct**:
    ```swift
    struct YourModule: DevDashModule {
        let id = "your-module"
@@ -93,18 +184,33 @@ DevDash/
        }
    }
    ```
-3. **Create shared state**:
+
+6. **Create list view** (observes lightweight state):
    ```swift
-   @MainActor
-   class YourModuleState: ObservableObject {
-       static let shared = YourModuleState()
-       // Your state properties
+   struct YourItemRow: View {
+       let itemInfo: YourItemInfo  // Lightweight
+       let manager: YourManager
+
+       var body: some View {
+           HStack {
+               Text(itemInfo.name)
+               // Actions use manager.getRuntime(id) for heavy operations
+           }
+       }
    }
    ```
-4. **Register module** in `DevDashApp.swift`:
+
+7. **Register module** in `DevDashApp.swift`:
    ```swift
    ModuleRegistry.shared.register(YourModule())
    ```
+
+**Critical Rules:**
+- ✅ Use Combine event forwarding for nested ObservableObjects
+- ✅ Separate lightweight state (for lists) from heavy runtime data (for details)
+- ✅ Let `@Published` trigger updates - NEVER manually call `objectWillChange.send()`
+- ❌ NEVER observe objects with frequently updating properties in list views
+- ❌ NEVER use manual refresh triggers like `listRefreshTrigger = UUID()`
 
 ### Available Modules
 
@@ -170,11 +276,19 @@ Secure credential storage with biometric authentication:
 
 The app follows strict performance guidelines:
 
-1. **Lightweight** - No heavy dependencies, minimal memory footprint
-2. **No memory leaks** - Proper cleanup of processes, tasks, and observers
-3. **Efficient rendering** - Virtualized log views, debounced search, ring buffers
-4. **Async operations** - Background tasks for shell commands and API calls
-5. **Resource cleanup** - Terminate processes on service stop/app quit
+1. **Event-Driven Architecture** - All modules use lightweight state with Combine event forwarding (see above)
+2. **No Observed Heavy Objects** - List views NEVER observe objects with frequently updating properties (logs, processes)
+3. **Automatic Updates** - `@Published` properties trigger UI updates; NEVER use manual refresh triggers
+4. **Lightweight State** - Separate read-only snapshots for lists from full runtime objects for details
+5. **No memory leaks** - Proper cleanup of processes, tasks, observers, and Combine subscriptions
+6. **Efficient rendering** - Virtualized log views, debounced search, ring buffers for logs
+7. **Async operations** - Background tasks for shell commands and API calls (Task.detached)
+8. **Resource cleanup** - Terminate processes on service stop/app quit
+
+**Performance Testing Requirements:**
+- CPU usage must remain low even with services running (test with Activity Monitor/htop)
+- Import/CRUD operations must update UI immediately (no manual refresh needed)
+- No memory leaks after operations (test with Instruments)
 
 ## Requirements
 
@@ -195,10 +309,27 @@ Open `DevDash.xcodeproj` in Xcode and press Cmd+R to build and run.
 
 ## Development Rules
 
-1. **Performance First** - Keep the app lightweight with no performance impact, prevent memory leaks, ensure proper resource cleanup
-2. **No Guessing** - If unsure about implementation details, ask clarifying questions
-3. **DRY Principle** - Avoid code duplication, extract shared logic to utilities
-4. **User-Friendly** - Design intuitive, simple interfaces with clear visual feedback
+**These rules are mandatory and override all other considerations:**
+
+1. **Performance First** - Keep the app lightweight with zero performance impact. Profile CPU and memory before committing changes. Test with running services and multiple operations.
+
+2. **Event-Driven Architecture** - Follow the established pattern:
+   - ✅ Use Combine event forwarding for nested ObservableObjects
+   - ✅ Separate lightweight state from heavy runtime data
+   - ✅ Let `@Published` trigger updates automatically
+   - ❌ NEVER observe objects with frequently updating properties in list views
+   - ❌ NEVER use manual refresh triggers (`listRefreshTrigger`, `objectWillChange.send()`)
+
+3. **No Guessing, No Patronizing** - If unsure about implementation details, say so explicitly and ask clarifying questions. Do not make assumptions.
+
+4. **DRY Principle** - Avoid code duplication. Extract shared logic to Core utilities. Reuse existing components.
+
+5. **User-Friendly & Intuitive** - Design simple, clear interfaces with immediate visual feedback. Make actions reversible where possible.
+
+**Before Creating New Modules:**
+- Review `CLAUDE.md` Event-Driven Architecture section for detailed implementation rules
+- Follow the exact pattern shown in ServiceManager, EC2Manager, CredentialsManager, AWSVaultManager
+- Test CPU usage with Activity Monitor/htop after implementation
 
 ## License
 
