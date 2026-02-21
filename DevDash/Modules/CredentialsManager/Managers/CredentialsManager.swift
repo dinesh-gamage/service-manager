@@ -17,10 +17,12 @@ class CredentialsManager: ObservableObject {
     @Published private(set) var isLoading = false
 
     private let keychainManager = KeychainManager.shared
-    private let alertQueue: AlertQueue
+    private weak var alertQueue: AlertQueue?
+    private weak var toastQueue: ToastQueue?
 
-    init(alertQueue: AlertQueue) {
+    init(alertQueue: AlertQueue? = nil, toastQueue: ToastQueue? = nil) {
         self.alertQueue = alertQueue
+        self.toastQueue = toastQueue
         loadCredentials()
     }
 
@@ -101,6 +103,7 @@ class CredentialsManager: ObservableObject {
 
         credentials.append(credential)
         saveCredentials()
+        toastQueue?.enqueue(message: "'\(title)' added")
     }
 
     func updateCredential(
@@ -181,6 +184,7 @@ class CredentialsManager: ObservableObject {
 
         credentials[index] = updatedCredential
         saveCredentials()
+        toastQueue?.enqueue(message: "'\(title)' updated")
     }
 
     func deleteCredential(at offsets: IndexSet) {
@@ -297,9 +301,9 @@ class CredentialsManager: ObservableObject {
                 let jsonData = try JSONSerialization.data(withJSONObject: exportData, options: [.prettyPrinted])
                 try jsonData.write(to: url)
 
-                self.alertQueue.enqueue(title: "Success", message: "Credentials exported successfully (passwords not included)")
+                self.toastQueue?.enqueue(message: "Credentials exported (passwords not included)")
             } catch {
-                self.alertQueue.enqueue(title: "Export Failed", message: error.localizedDescription)
+                self.alertQueue?.enqueue(title: "Export Failed", message: error.localizedDescription)
             }
         }
     }
@@ -353,12 +357,13 @@ class CredentialsManager: ObservableObject {
                     importedCount += 1
                 }
 
-                self.alertQueue.enqueue(
-                    title: "Import Complete",
-                    message: "Imported \(importedCount) credential(s). Please set passwords manually."
-                )
+                if importedCount > 0 {
+                    self.toastQueue?.enqueue(message: "Imported \(importedCount) credential\(importedCount == 1 ? "" : "s") (set passwords manually)")
+                } else {
+                    self.toastQueue?.enqueue(message: "No credentials imported")
+                }
             } catch {
-                self.alertQueue.enqueue(title: "Import Failed", message: error.localizedDescription)
+                self.alertQueue?.enqueue(title: "Import Failed", message: error.localizedDescription)
             }
         }
     }

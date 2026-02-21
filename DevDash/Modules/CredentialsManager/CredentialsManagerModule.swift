@@ -31,6 +31,7 @@ class CredentialsManagerState: ObservableObject {
     static let shared = CredentialsManagerState()
 
     let alertQueue = AlertQueue()
+    let toastQueue = ToastQueue()
     let authManager = BiometricAuthManager.shared
     @Published var manager: CredentialsManager
     @Published var selectedCredential: Credential?
@@ -53,7 +54,7 @@ class CredentialsManagerState: ObservableObject {
     @Published var revealedFields: [UUID: String] = [:]
 
     private init() {
-        self.manager = CredentialsManager(alertQueue: alertQueue)
+        self.manager = CredentialsManager(alertQueue: alertQueue, toastQueue: toastQueue)
     }
 
     // MARK: - Authentication & Reveal
@@ -124,7 +125,7 @@ class CredentialsManagerState: ObservableObject {
             pasteboard.clearContents()
             pasteboard.setString(text, forType: .string)
 
-            alertQueue.enqueue(title: "Copied", message: "\(fieldName) copied to clipboard")
+            toastQueue.enqueue(message: "\(fieldName) copied to clipboard")
         } catch {
             alertQueue.enqueue(title: "Authentication Failed", message: error.localizedDescription)
         }
@@ -292,10 +293,12 @@ struct CredentialsManagerSidebarView: View {
             }
             Button("Delete", role: .destructive) {
                 if let credential = state.credentialToDelete {
+                    let credentialTitle = credential.title
                     if state.selectedCredential == credential {
                         state.selectedCredential = nil
                     }
                     state.manager.deleteCredential(credential)
+                    state.toastQueue.enqueue(message: "'\(credentialTitle)' deleted")
                     state.credentialToDelete = nil
                 }
             }

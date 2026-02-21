@@ -31,6 +31,7 @@ class ServiceManagerState: ObservableObject {
     static let shared = ServiceManagerState()
 
     let alertQueue = AlertQueue()
+    let toastQueue = ToastQueue()
     @Published var manager: ServiceManager
     @Published var selectedService: ServiceRuntime?
     @Published var showingAddService = false
@@ -41,7 +42,7 @@ class ServiceManagerState: ObservableObject {
     @Published var showingDeleteConfirmation = false
 
     private init() {
-        self.manager = ServiceManager(alertQueue: alertQueue)
+        self.manager = ServiceManager(alertQueue: alertQueue, toastQueue: toastQueue)
     }
 }
 
@@ -140,11 +141,13 @@ struct ServiceManagerSidebarView: View {
             Button("Delete", role: .destructive) {
                 if let service = state.serviceToDelete,
                    let index = state.manager.services.firstIndex(where: { $0.id == service.id }) {
+                    let serviceName = service.config.name
                     // Clear selection if deleting selected service
                     if state.selectedService == service {
                         state.selectedService = nil
                     }
                     state.manager.deleteService(at: IndexSet(integer: index))
+                    state.toastQueue.enqueue(message: "'\(serviceName)' deleted")
                     state.serviceToDelete = nil
                 }
             }

@@ -12,6 +12,12 @@ struct ContentView: View {
     @State private var selectedModuleId: String?
     @State private var showingModuleList = true
 
+    // Module toast queues
+    @ObservedObject var serviceToastQueue = ServiceManagerState.shared.toastQueue
+    @ObservedObject var ec2ToastQueue = EC2ManagerState.shared.toastQueue
+    @ObservedObject var credentialsToastQueue = CredentialsManagerState.shared.toastQueue
+    @ObservedObject var awsVaultToastQueue = AWSVaultManagerState.shared.toastQueue
+
     var selectedModule: (any DevDashModule)? {
         guard let id = selectedModuleId else { return nil }
         return registry.getModule(byId: id)
@@ -132,6 +138,10 @@ struct ContentView: View {
                 ServiceManagerState.shared.manager.checkAllServices()
             }
         }
+        .toastQueue(serviceToastQueue)
+        .toastQueue(ec2ToastQueue)
+        .toastQueue(credentialsToastQueue)
+        .toastQueue(awsVaultToastQueue)
     }
 }
 

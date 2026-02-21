@@ -118,16 +118,21 @@ class ImportExportManager {
     ///   - items: Items to export
     ///   - defaultFileName: Default filename for save dialog
     ///   - title: Dialog title
+    ///   - completion: Optional completion handler called on main thread with Result
     func exportJSON<T: Codable>(
         _ items: [T],
         defaultFileName: String = "export.json",
-        title: String = "Export"
+        title: String = "Export",
+        completion: ((Result<Void, ImportError>) -> Void)? = nil
     ) {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
 
         guard let jsonData = try? encoder.encode(items),
               let jsonString = String(data: jsonData, encoding: .utf8) else {
+            DispatchQueue.main.async {
+                completion?(.failure(.jsonDecodeFailed))
+            }
             return
         }
 
@@ -137,8 +142,29 @@ class ImportExportManager {
         savePanel.title = title
 
         savePanel.begin { response in
-            if response == .OK, let url = savePanel.url {
-                try? jsonString.write(to: url, atomically: true, encoding: .utf8)
+            guard response == .OK else {
+                DispatchQueue.main.async {
+                    completion?(.failure(.userCancelled))
+                }
+                return
+            }
+
+            guard let url = savePanel.url else {
+                DispatchQueue.main.async {
+                    completion?(.failure(.noFileSelected))
+                }
+                return
+            }
+
+            do {
+                try jsonString.write(to: url, atomically: true, encoding: .utf8)
+                DispatchQueue.main.async {
+                    completion?(.success(()))
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    completion?(.failure(.fileReadFailed))
+                }
             }
         }
     }

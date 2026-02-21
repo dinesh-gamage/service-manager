@@ -16,9 +16,11 @@ class ServiceManager: ObservableObject {
     @Published var services: [ServiceRuntime] = []
 
     private weak var alertQueue: AlertQueue?
+    private weak var toastQueue: ToastQueue?
 
-    init(alertQueue: AlertQueue? = nil) {
+    init(alertQueue: AlertQueue? = nil, toastQueue: ToastQueue? = nil) {
         self.alertQueue = alertQueue
+        self.toastQueue = toastQueue
         loadServices()
     }
 
@@ -39,6 +41,7 @@ class ServiceManager: ObservableObject {
         let runtime = ServiceRuntime(config: config)
         services.append(runtime)
         saveServices()
+        toastQueue?.enqueue(message: "'\(config.name)' added")
     }
 
     func updateService(_ service: ServiceRuntime, with newConfig: ServiceConfig) {
@@ -46,6 +49,7 @@ class ServiceManager: ObservableObject {
             let updatedRuntime = ServiceRuntime(config: newConfig)
             services[index] = updatedRuntime
             saveServices()
+            toastQueue?.enqueue(message: "'\(newConfig.name)' updated")
 
             // Update selected service reference if this was the selected one
             if ServiceManagerState.shared.selectedService?.id == service.id {
@@ -80,7 +84,17 @@ class ServiceManager: ObservableObject {
             configs,
             defaultFileName: "services.json",
             title: "Export Services"
-        )
+        ) { [weak self] result in
+            switch result {
+            case .success:
+                self?.toastQueue?.enqueue(message: "Services exported successfully")
+            case .failure(let error):
+                if case .userCancelled = error {
+                    return
+                }
+                self?.alertQueue?.enqueue(title: "Export Failed", message: error.localizedDescription)
+            }
+        }
     }
 
     func importServices() {
@@ -109,18 +123,18 @@ class ServiceManager: ObservableObject {
                 }
                 self.saveServices()
 
-                // Show success message
+                // Show success toast
                 let message: String
                 if newCount > 0 && updatedCount > 0 {
-                    message = "Imported \(newCount) new service(s) and updated \(updatedCount) existing service(s)."
+                    message = "Imported \(newCount) new, updated \(updatedCount) existing"
                 } else if newCount > 0 {
-                    message = "Imported \(newCount) new service(s)."
+                    message = "Imported \(newCount) new service\(newCount == 1 ? "" : "s")"
                 } else if updatedCount > 0 {
-                    message = "Updated \(updatedCount) existing service(s)."
+                    message = "Updated \(updatedCount) service\(updatedCount == 1 ? "" : "s")"
                 } else {
-                    message = "No services imported."
+                    message = "No services imported"
                 }
-                self.alertQueue?.enqueue(title: "Import Complete", message: message)
+                self.toastQueue?.enqueue(message: message)
 
             case .failure(let error):
                 // Only show error alerts, not cancellation

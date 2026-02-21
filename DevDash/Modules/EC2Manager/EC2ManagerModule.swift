@@ -31,6 +31,7 @@ class EC2ManagerState: ObservableObject {
     static let shared = EC2ManagerState()
 
     let alertQueue = AlertQueue()
+    let toastQueue = ToastQueue()
     @Published var manager: InstanceGroupManager
     @Published var selectedGroup: InstanceGroup?
 
@@ -51,7 +52,7 @@ class EC2ManagerState: ObservableObject {
     @Published var showingDeleteInstanceConfirmation = false
 
     private init() {
-        self.manager = InstanceGroupManager(alertQueue: alertQueue)
+        self.manager = InstanceGroupManager(alertQueue: alertQueue, toastQueue: toastQueue)
     }
 }
 
@@ -128,11 +129,13 @@ struct EC2ManagerSidebarView: View {
             Button("Delete", role: .destructive) {
                 if let group = state.groupToDelete,
                    let index = state.manager.groups.firstIndex(where: { $0.id == group.id }) {
+                    let groupName = group.name
                     // Clear selection if deleting selected group
                     if state.selectedGroup == group {
                         state.selectedGroup = nil
                     }
                     state.manager.deleteGroup(at: IndexSet(integer: index))
+                    state.toastQueue.enqueue(message: "'\(groupName)' deleted")
                     state.groupToDelete = nil
                 }
             }

@@ -16,10 +16,12 @@ class AWSVaultManager: ObservableObject {
     @Published private(set) var isLoading = false
     @Published var listRefreshTrigger = UUID()
 
-    private let alertQueue: AlertQueue
+    private weak var alertQueue: AlertQueue?
+    private weak var toastQueue: ToastQueue?
 
-    init(alertQueue: AlertQueue) {
+    init(alertQueue: AlertQueue? = nil, toastQueue: ToastQueue? = nil) {
         self.alertQueue = alertQueue
+        self.toastQueue = toastQueue
         loadProfiles()
     }
 
@@ -52,11 +54,12 @@ class AWSVaultManager: ObservableObject {
             saveProfiles()
             listRefreshTrigger = UUID()
             objectWillChange.send()
+            toastQueue?.enqueue(message: "'\(updatedProfile.name)' added")
 
             isLoading = false
         } catch {
             isLoading = false
-            alertQueue.enqueue(title: "Error", message: "Failed to add profile: \(error.localizedDescription)")
+            alertQueue?.enqueue(title: "Error", message: "Failed to add profile: \(error.localizedDescription)")
         }
     }
 
@@ -84,12 +87,13 @@ class AWSVaultManager: ObservableObject {
                 saveProfiles()
                 listRefreshTrigger = UUID()
                 objectWillChange.send()
+                toastQueue?.enqueue(message: "'\(updatedProfile.name)' updated")
             }
 
             isLoading = false
         } catch {
             isLoading = false
-            alertQueue.enqueue(title: "Error", message: "Failed to update profile: \(error.localizedDescription)")
+            alertQueue?.enqueue(title: "Error", message: "Failed to update profile: \(error.localizedDescription)")
         }
     }
 
@@ -120,7 +124,7 @@ class AWSVaultManager: ObservableObject {
                 ? " Click the 🩺 (stethoscope) icon in the toolbar to check keychain health and get fix instructions."
                 : " You may need to run 'aws-vault remove \(profile.name)' manually."
 
-            alertQueue.enqueue(
+            alertQueue?.enqueue(
                 title: "Warning",
                 message: "Profile removed from DevDash, but couldn't remove from aws-vault keychain: \(errorMsg).\(suggestion)"
             )
@@ -274,7 +278,7 @@ class AWSVaultManager: ObservableObject {
 
             return newProfiles.count
         } catch {
-            alertQueue.enqueue(title: "Sync Failed", message: error.localizedDescription)
+            alertQueue?.enqueue(title: "Sync Failed", message: error.localizedDescription)
             return 0
         }
     }
@@ -632,14 +636,11 @@ class AWSVaultManager: ObservableObject {
                     try jsonData.write(to: url)
 
                     await MainActor.run {
-                        self.alertQueue.enqueue(
-                            title: "Export Successful",
-                            message: "Exported \(self.profiles.count) profile(s) with credentials. Keep this file secure!"
-                        )
+                        self.toastQueue?.enqueue(message: "Exported \(self.profiles.count) profile\(self.profiles.count == 1 ? "" : "s") with credentials")
                     }
                 } catch {
                     await MainActor.run {
-                        self.alertQueue.enqueue(title: "Export Failed", message: error.localizedDescription)
+                        self.alertQueue?.enqueue(title: "Export Failed", message: error.localizedDescription)
                     }
                 }
             }
@@ -656,11 +657,13 @@ class AWSVaultManager: ObservableObject {
             guard response == .OK, let url = panel.url else { return }
 
             Task {
+                await MainActor.run { self.isLoading = true }
+
                 do {
                     let data = try Data(contentsOf: url)
                     let jsonArray = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] ?? []
 
-                    var importedCount = 0
+                    var importedProfiles: [AWSVaultProfile] = []
                     let existingNames = Set(self.profiles.map { $0.name })
 
                     for item in jsonArray {
@@ -669,7 +672,7 @@ class AWSVaultManager: ObservableObject {
                             continue
                         }
 
-                        let profile = AWSVaultProfile(
+                        var profile = AWSVaultProfile(
                             name: name,
                             region: item["region"] as? String,
                             description: item["description"] as? String
@@ -678,23 +681,41 @@ class AWSVaultManager: ObservableObject {
                         let accessKeyId = item["accessKeyId"] as? String
                         let secretAccessKey = item["secretAccessKey"] as? String
 
-                        await self.addProfile(profile, accessKeyId: accessKeyId, secretAccessKey: secretAccessKey)
-                        importedCount += 1
+                        // If credentials provided, add to aws-vault
+                        if let accessKeyId = accessKeyId, let secretAccessKey = secretAccessKey {
+                            do {
+                                try await self.addToAWSVault(profile: profile, accessKeyId: accessKeyId, secretAccessKey: secretAccessKey)
+                                profile.awsVaultBinaryHash = await self.getCurrentAWSVaultBinaryHash()
+                            } catch {
+                                // Skip this profile if aws-vault add fails
+                                await MainActor.run {
+                                    self.alertQueue?.enqueue(title: "Import Error", message: "Failed to add '\(name)': \(error.localizedDescription)")
+                                }
+                                continue
+                            }
+                        }
+
+                        importedProfiles.append(profile)
                     }
 
-                    // Final refresh to ensure UI updates
+                    // Single update at the end
                     await MainActor.run {
+                        self.profiles.append(contentsOf: importedProfiles)
+                        self.saveProfiles()
                         self.listRefreshTrigger = UUID()
                         self.objectWillChange.send()
+                        self.isLoading = false
 
-                        self.alertQueue.enqueue(
-                            title: "Import Complete",
-                            message: "Imported \(importedCount) profile(s) with credentials"
-                        )
+                        if !importedProfiles.isEmpty {
+                            self.toastQueue?.enqueue(message: "Imported \(importedProfiles.count) profile\(importedProfiles.count == 1 ? "" : "s") with credentials")
+                        } else {
+                            self.toastQueue?.enqueue(message: "No new profiles imported")
+                        }
                     }
                 } catch {
                     await MainActor.run {
-                        self.alertQueue.enqueue(title: "Import Failed", message: error.localizedDescription)
+                        self.isLoading = false
+                        self.alertQueue?.enqueue(title: "Import Failed", message: error.localizedDescription)
                     }
                 }
             }

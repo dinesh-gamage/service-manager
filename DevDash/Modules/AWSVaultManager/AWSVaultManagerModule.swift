@@ -31,6 +31,7 @@ class AWSVaultManagerState: ObservableObject {
     static let shared = AWSVaultManagerState()
 
     let alertQueue = AlertQueue()
+    let toastQueue = ToastQueue()
     @Published var manager: AWSVaultManager
     @Published var selectedProfile: AWSVaultProfile?
 
@@ -45,7 +46,7 @@ class AWSVaultManagerState: ObservableObject {
     @Published var healthCheckResult: AWSVaultManager.KeychainHealthStatus?
 
     private init() {
-        self.manager = AWSVaultManager(alertQueue: alertQueue)
+        self.manager = AWSVaultManager(alertQueue: alertQueue, toastQueue: toastQueue)
     }
 
     // MARK: - Helper Methods
@@ -55,7 +56,7 @@ class AWSVaultManagerState: ObservableObject {
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
 
-        alertQueue.enqueue(title: "Copied", message: "\(fieldName) copied to clipboard")
+        toastQueue.enqueue(message: "\(fieldName) copied to clipboard")
     }
 }
 
@@ -74,9 +75,9 @@ struct AWSVaultManagerSidebarView: View {
                     Task {
                         let count = await state.manager.syncFromAWSVault()
                         if count > 0 {
-                            state.alertQueue.enqueue(title: "Sync Complete", message: "Synced \(count) new profile(s) from aws-vault")
+                            state.toastQueue.enqueue(message: "Synced \(count) new profile\(count == 1 ? "" : "s") from aws-vault")
                         } else {
-                            state.alertQueue.enqueue(title: "Sync Complete", message: "No new profiles found")
+                            state.toastQueue.enqueue(message: "No new profiles found")
                         }
                     }
                 },
@@ -149,11 +150,13 @@ struct AWSVaultManagerSidebarView: View {
             }
             Button("Delete", role: .destructive) {
                 if let profile = state.profileToDelete {
+                    let profileName = profile.name
                     Task {
                         await state.manager.deleteProfile(profile)
                         if state.selectedProfile?.id == profile.id {
                             state.selectedProfile = nil
                         }
+                        state.toastQueue.enqueue(message: "'\(profileName)' deleted")
                         state.profileToDelete = nil
                         state.deleteConfirmationText = ""
                     }
@@ -171,10 +174,11 @@ struct AWSVaultManagerSidebarView: View {
                     Button("Recreate Keychain") {
                         Task {
                             let (success, message) = await state.manager.recreateKeychainWithMigration()
-                            state.alertQueue.enqueue(
-                                title: success ? "Success" : "Error",
-                                message: message
-                            )
+                            if success {
+                                state.toastQueue.enqueue(message: message)
+                            } else {
+                                state.alertQueue.enqueue(title: "Error", message: message)
+                            }
                             state.healthCheckResult = nil
                         }
                     }

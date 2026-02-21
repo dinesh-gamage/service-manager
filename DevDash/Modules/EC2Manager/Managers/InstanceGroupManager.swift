@@ -18,9 +18,11 @@ class InstanceGroupManager: ObservableObject {
     @Published var listRefreshTrigger = UUID()
 
     private weak var alertQueue: AlertQueue?
+    private weak var toastQueue: ToastQueue?
 
-    init(alertQueue: AlertQueue? = nil) {
+    init(alertQueue: AlertQueue? = nil, toastQueue: ToastQueue? = nil) {
         self.alertQueue = alertQueue
+        self.toastQueue = toastQueue
         loadGroups()
     }
 
@@ -136,6 +138,7 @@ class InstanceGroupManager: ObservableObject {
     func addGroup(_ group: InstanceGroup) {
         groups.append(group)
         saveGroups()
+        toastQueue?.enqueue(message: "'\(group.name)' added")
         listRefreshTrigger = UUID()
     }
 
@@ -143,6 +146,7 @@ class InstanceGroupManager: ObservableObject {
         if let index = groups.firstIndex(where: { $0.id == groupId }) {
             groups[index] = newGroup
             saveGroups()
+            toastQueue?.enqueue(message: "'\(newGroup.name)' updated")
 
             // Update selected group reference if this was the selected one
             if EC2ManagerState.shared.selectedGroup?.id == groupId {
@@ -195,7 +199,17 @@ class InstanceGroupManager: ObservableObject {
             groups,
             defaultFileName: "ec2-groups.json",
             title: "Export EC2 Groups"
-        )
+        ) { [weak self] result in
+            switch result {
+            case .success:
+                self?.toastQueue?.enqueue(message: "Groups exported successfully")
+            case .failure(let error):
+                if case .userCancelled = error {
+                    return
+                }
+                self?.alertQueue?.enqueue(title: "Export Failed", message: error.localizedDescription)
+            }
+        }
     }
 
     func importGroups() {
@@ -224,18 +238,18 @@ class InstanceGroupManager: ObservableObject {
                 }
                 self.saveGroups()
 
-                // Show success message
+                // Show success toast
                 let message: String
                 if newCount > 0 && updatedCount > 0 {
-                    message = "Imported \(newCount) new group(s) and updated \(updatedCount) existing group(s)."
+                    message = "Imported \(newCount) new, updated \(updatedCount) existing"
                 } else if newCount > 0 {
-                    message = "Imported \(newCount) new group(s)."
+                    message = "Imported \(newCount) new group\(newCount == 1 ? "" : "s")"
                 } else if updatedCount > 0 {
-                    message = "Updated \(updatedCount) existing group(s)."
+                    message = "Updated \(updatedCount) group\(updatedCount == 1 ? "" : "s")"
                 } else {
-                    message = "No changes made."
+                    message = "No groups imported"
                 }
-                self.alertQueue?.enqueue(title: "Import Complete", message: message)
+                self.toastQueue?.enqueue(message: message)
 
             case .failure(let error):
                 // Only show error alerts, not cancellation
