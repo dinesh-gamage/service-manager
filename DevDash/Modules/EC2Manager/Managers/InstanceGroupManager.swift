@@ -17,6 +17,7 @@ class InstanceGroupManager: ObservableObject {
     @Published var isRestarting: [UUID: Bool] = [:]
     @Published var isCheckingHealth: [UUID: Bool] = [:]
     @Published var instanceOutputs: [UUID: CommandOutputViewModel] = [:]
+    @Published var instanceHealthData: [UUID: [String: Any]] = [:]
     @Published var listRefreshTrigger = UUID()
     @Published private(set) var isLoading = false
 
@@ -303,7 +304,7 @@ class InstanceGroupManager: ObservableObject {
         }
     }
 
-    func checkInstanceHealth(group: InstanceGroup, instance: EC2Instance) {
+    func checkInstanceHealth(group: InstanceGroup, instance: EC2Instance, completion: @escaping ([String: Any]?) -> Void) {
         isCheckingHealth[instance.id] = true
 
         // Create or get output view model for this instance
@@ -348,15 +349,32 @@ class InstanceGroupManager: ObservableObject {
                     fullLog += "[STDERR]\n\(errorOutput)\n"
                 }
 
+                // Parse JSON response
+                var parsedData: [String: Any]? = nil
+                if exitCode == 0 && !output.isEmpty {
+                    if let jsonData = output.data(using: .utf8),
+                       let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] {
+                        parsedData = json
+                    }
+                }
+
                 await MainActor.run {
                     outputViewModel.setLogs(fullLog)
                     self.isCheckingHealth[instance.id] = false
+
+                    // Store health data temporarily (session only)
+                    if let parsedData = parsedData {
+                        self.instanceHealthData[instance.id] = parsedData
+                    }
+
+                    completion(parsedData)
                 }
             } catch {
                 let errorLog = "[Health Check] \(instance.name)\n[Command] \(command)\n\n[Error] \(error.localizedDescription)\n"
                 await MainActor.run {
                     outputViewModel.setLogs(errorLog)
                     self.isCheckingHealth[instance.id] = false
+                    completion(nil)
                 }
             }
         }

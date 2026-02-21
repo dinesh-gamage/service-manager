@@ -120,19 +120,11 @@ struct InstanceGroupDetailView: View {
 
                 TableColumn("Actions") { instance in
                     HStack(spacing: 6) {
-                        // View Output button (only if output exists)
-                        if manager.instanceOutputs[instance.id] != nil {
-                            VariantButton(icon: "eye", variant: .secondary, tooltip: "View Output") {
-                                instanceOutputToView = instance
-                                showingOutput = true
-                            }
-                        }
-
                         if manager.isFetching[instance.id] == true {
                             ProgressView()
                                 .scaleEffect(0.7)
                         } else {
-                            VariantButton(icon: "arrow.clockwise", variant: .primary, tooltip: "Fetch IP") {
+                            VariantButton(icon: "arrow.down.circle", variant: .primary, tooltip: "Fetch IP") {
                                 manager.fetchInstanceIP(group: group, instance: instance)
                             }
                         }
@@ -141,7 +133,7 @@ struct InstanceGroupDetailView: View {
                             ProgressView()
                                 .scaleEffect(0.7)
                         } else {
-                            VariantButton(icon: "arrow.counterclockwise.circle", variant: .primary, tooltip: "Restart Instance") {
+                            VariantButton(icon: "power.circle", variant: .danger, tooltip: "Restart Instance") {
                                 state.selectedGroupForInstance = group
                                 state.instanceToRestart = instance
                                 state.restartConfirmationText = ""
@@ -153,8 +145,29 @@ struct InstanceGroupDetailView: View {
                             ProgressView()
                                 .scaleEffect(0.7)
                         } else {
-                            VariantButton(icon: "heart.text.square", variant: .secondary, tooltip: "Health Check") {
-                                manager.checkInstanceHealth(group: group, instance: instance)
+                            VariantButton(icon: "stethoscope", variant: .primary, tooltip: "Health Check") {
+                                state.healthCheckInstance = instance
+                                manager.checkInstanceHealth(group: group, instance: instance) { healthData in
+                                    state.healthCheckData = healthData
+                                    state.showingHealthCheckResults = true
+                                }
+                            }
+                        }
+
+                        // View Health Check button (only if health data exists)
+                        if manager.instanceHealthData[instance.id] != nil {
+                            VariantButton(icon: "chart.bar.doc.horizontal", variant: .secondary, tooltip: "View Health Check") {
+                                state.healthCheckInstance = instance
+                                state.healthCheckData = manager.instanceHealthData[instance.id]
+                                state.showingHealthCheckResults = true
+                            }
+                        }
+
+                        // View Output button (only if output exists)
+                        if manager.instanceOutputs[instance.id] != nil {
+                            VariantButton(icon: "terminal", variant: .secondary, tooltip: "View Output") {
+                                instanceOutputToView = instance
+                                showingOutput = true
                             }
                         }
                     }
@@ -232,6 +245,11 @@ struct InstanceGroupDetailView: View {
                 Text("This will stop and restart '\(instance.name)' (\(instance.instanceId)). The instance will be temporarily unavailable.\n\nType 'confirm' to proceed.")
             }
         }
+        .sheet(isPresented: $state.showingHealthCheckResults) {
+            if let instance = state.healthCheckInstance {
+                HealthCheckResultsView(instance: instance, healthData: state.healthCheckData)
+            }
+        }
         } else {
             // Fallback if group not found
             VStack {
@@ -240,5 +258,185 @@ struct InstanceGroupDetailView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+    }
+}
+
+// MARK: - Health Check Results View
+
+struct HealthCheckResultsView: View {
+    @Environment(\.dismiss) var dismiss
+    let instance: EC2Instance
+    let healthData: [String: Any]?
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    if let data = healthData,
+                       let statuses = data["InstanceStatuses"] as? [[String: Any]],
+                       let status = statuses.first {
+
+                        // Instance State
+                        if let instanceState = status["InstanceState"] as? [String: Any] {
+                            HealthCheckSection(title: "Instance State") {
+                                HealthCheckRow(label: "State", value: instanceState["Name"] as? String ?? "—")
+                                HealthCheckRow(label: "Code", value: "\(instanceState["Code"] as? Int ?? 0)")
+                            }
+                        }
+
+                        // System Status
+                        if let systemStatus = status["SystemStatus"] as? [String: Any] {
+                            HealthCheckSection(title: "System Status") {
+                                HealthCheckRow(label: "Status", value: systemStatus["Status"] as? String ?? "—")
+
+                                if let details = systemStatus["Details"] as? [[String: Any]] {
+                                    ForEach(details.indices, id: \.self) { index in
+                                        let detail = details[index]
+                                        if let name = detail["Name"] as? String,
+                                           let detailStatus = detail["Status"] as? String {
+                                            HealthCheckRow(label: name, value: detailStatus)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Instance Status
+                        if let instanceStatus = status["InstanceStatus"] as? [String: Any] {
+                            HealthCheckSection(title: "Instance Status") {
+                                HealthCheckRow(label: "Status", value: instanceStatus["Status"] as? String ?? "—")
+
+                                if let details = instanceStatus["Details"] as? [[String: Any]] {
+                                    ForEach(details.indices, id: \.self) { index in
+                                        let detail = details[index]
+                                        if let name = detail["Name"] as? String,
+                                           let detailStatus = detail["Status"] as? String {
+                                            HealthCheckRow(label: name, value: detailStatus)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Events
+                        if let events = status["Events"] as? [[String: Any]], !events.isEmpty {
+                            HealthCheckSection(title: "Events") {
+                                ForEach(events.indices, id: \.self) { index in
+                                    let event = events[index]
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        if let code = event["Code"] as? String {
+                                            Text(code)
+                                                .font(.callout)
+                                                .fontWeight(.medium)
+                                        }
+                                        if let description = event["Description"] as? String {
+                                            Text(description)
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+                                        }
+                                        if let notBefore = event["NotBefore"] as? String {
+                                            Text("Not Before: \(notBefore)")
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+                                        }
+                                    }
+                                    .padding(.vertical, 4)
+
+                                    if index < events.count - 1 {
+                                        Divider()
+                                    }
+                                }
+                            }
+                        }
+
+                        // Availability Zone
+                        if let az = status["AvailabilityZone"] as? String {
+                            HealthCheckSection(title: "Location") {
+                                HealthCheckRow(label: "Availability Zone", value: az)
+                            }
+                        }
+
+                    } else {
+                        // No data or error
+                        VStack(spacing: 12) {
+                            Image(systemName: "exclamationmark.triangle")
+                                .font(.system(size: 48))
+                                .foregroundColor(.orange)
+
+                            Text("No Health Data Available")
+                                .font(.title3)
+                                .fontWeight(.medium)
+
+                            Text("The health check did not return valid data. Check the output logs for details.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .multilineTextAlignment(.center)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(40)
+                    }
+                }
+                .padding(20)
+            }
+            .navigationTitle("Health Check: \(instance.name)")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+        .frame(minWidth: 600, minHeight: 500)
+    }
+}
+
+struct HealthCheckSection<Content: View>: View {
+    let title: String
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title)
+                .font(.headline)
+
+            VStack(alignment: .leading, spacing: 8) {
+                content()
+            }
+            .padding(12)
+            .background(Color.primary.opacity(0.04))
+            .cornerRadius(8)
+        }
+    }
+}
+
+struct HealthCheckRow: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        HStack {
+            Text(label)
+                .font(.callout)
+                .foregroundColor(.secondary)
+                .frame(width: 150, alignment: .leading)
+
+            Text(value)
+                .font(.callout)
+                .fontWeight(.medium)
+                .foregroundColor(statusColor(for: value))
+
+            Spacer()
+        }
+    }
+
+    private func statusColor(for value: String) -> Color {
+        let normalized = value.lowercased()
+        if normalized == "ok" || normalized == "passed" || normalized == "running" {
+            return .green
+        } else if normalized == "impaired" || normalized == "insufficient-data" || normalized.contains("fail") {
+            return .red
+        } else if normalized == "initializing" || normalized == "pending" {
+            return .orange
+        }
+        return .primary
     }
 }

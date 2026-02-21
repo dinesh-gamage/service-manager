@@ -53,6 +53,9 @@ class EC2ManagerState: ObservableObject {
     @Published var instanceToRestart: EC2Instance?
     @Published var showingRestartInstanceConfirmation = false
     @Published var restartConfirmationText = ""
+    @Published var showingHealthCheckResults = false
+    @Published var healthCheckInstance: EC2Instance?
+    @Published var healthCheckData: [String: Any]?
 
     private init() {
         self.manager = InstanceGroupManager(alertQueue: alertQueue, toastQueue: toastQueue)
