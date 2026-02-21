@@ -317,53 +317,73 @@ class CredentialsManager: ObservableObject {
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
 
-            do {
-                let data = try Data(contentsOf: url)
-                let jsonArray = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] ?? []
+            Task { @MainActor in
+                self.isLoading = true
 
-                var importedCount = 0
+                do {
+                    let data = try Data(contentsOf: url)
+                    let jsonArray = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] ?? []
 
-                for item in jsonArray {
-                    guard let title = item["title"] as? String,
-                          let category = item["category"] as? String else {
-                        continue
-                    }
+                    var importedCredentials: [Credential] = []
 
-                    let username = item["username"] as? String
-                    let notes = item["notes"] as? String
-                    let fieldsData = item["additionalFields"] as? [[String: String]] ?? []
+                    for item in jsonArray {
+                        guard let title = item["title"] as? String,
+                              let category = item["category"] as? String else {
+                            continue
+                        }
 
-                    let fields = fieldsData.map { fieldData in
-                        CredentialField(
-                            key: fieldData["key"] ?? "",
-                            value: fieldData["value"] ?? "",
-                            isSecret: false
+                        let username = item["username"] as? String
+                        let url = item["url"] as? String
+                        let notes = item["notes"] as? String
+                        let fieldsData = item["additionalFields"] as? [[String: Any]] ?? []
+
+                        let fields = fieldsData.compactMap { fieldData -> CredentialField? in
+                            guard let key = fieldData["key"] as? String else { return nil }
+                            return CredentialField(
+                                key: key,
+                                value: fieldData["value"] as? String ?? "",
+                                isSecret: fieldData["isSecret"] as? Bool ?? false
+                            )
+                        }
+
+                        // Create credential with empty password (user must set it manually)
+                        let credentialId = UUID()
+                        let passwordKey = Credential.passwordKeychainKey(for: credentialId)
+
+                        // Save empty password to keychain
+                        try? self.keychainManager.save("", for: passwordKey)
+
+                        let credential = Credential(
+                            id: credentialId,
+                            title: title,
+                            category: category,
+                            url: url,
+                            username: username,
+                            passwordKeychainKey: passwordKey,
+                            accessTokenKeychainKey: nil,
+                            recoveryCodesKeychainKey: nil,
+                            additionalFields: fields,
+                            notes: notes
                         )
+
+                        importedCredentials.append(credential)
                     }
 
-                    // Create credential with empty password (user must set it)
-                    try? self.addCredential(
-                        title: title,
-                        category: category,
-                        url: nil,
-                        username: username,
-                        password: "",
-                        accessToken: nil,
-                        recoveryCodes: nil,
-                        additionalFields: fields,
-                        notes: notes
-                    )
+                    // Single update at the end
+                    self.credentials.append(contentsOf: importedCredentials)
+                    self.saveCredentials()
+                    self.objectWillChange.send()
+                    self.isLoading = false
 
-                    importedCount += 1
+                    if !importedCredentials.isEmpty {
+                        self.toastQueue?.enqueue(message: "Imported \(importedCredentials.count) credential\(importedCredentials.count == 1 ? "" : "s") (set passwords manually)")
+                    } else {
+                        self.toastQueue?.enqueue(message: "No credentials imported")
+                    }
+                } catch {
+                    self.isLoading = false
+                    self.alertQueue?.enqueue(title: "Import Failed", message: error.localizedDescription)
                 }
-
-                if importedCount > 0 {
-                    self.toastQueue?.enqueue(message: "Imported \(importedCount) credential\(importedCount == 1 ? "" : "s") (set passwords manually)")
-                } else {
-                    self.toastQueue?.enqueue(message: "No credentials imported")
-                }
-            } catch {
-                self.alertQueue?.enqueue(title: "Import Failed", message: error.localizedDescription)
             }
         }
     }

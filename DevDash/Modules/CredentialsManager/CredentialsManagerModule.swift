@@ -53,8 +53,16 @@ class CredentialsManagerState: ObservableObject {
     @Published var revealedRecoveryCodes: [UUID: String] = [:]
     @Published var revealedFields: [UUID: String] = [:]
 
+    private var cancellables = Set<AnyCancellable>()
+
     private init() {
         self.manager = CredentialsManager(alertQueue: alertQueue, toastQueue: toastQueue)
+
+        // Forward manager changes to state
+        manager.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
+        .store(in: &cancellables)
     }
 
     // MARK: - Authentication & Reveal

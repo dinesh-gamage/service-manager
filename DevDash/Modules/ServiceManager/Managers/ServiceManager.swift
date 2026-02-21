@@ -14,6 +14,7 @@ import UniformTypeIdentifiers
 @MainActor
 class ServiceManager: ObservableObject {
     @Published var services: [ServiceRuntime] = []
+    @Published private(set) var isLoading = false
 
     private weak var alertQueue: AlertQueue?
     private weak var toastQueue: ToastQueue?
@@ -98,6 +99,8 @@ class ServiceManager: ObservableObject {
     }
 
     func importServices() {
+        isLoading = true
+
         ImportExportManager.shared.importJSON(
             ServiceConfig.self,
             title: "Import Services"
@@ -122,6 +125,7 @@ class ServiceManager: ObservableObject {
                     }
                 }
                 self.saveServices()
+                self.isLoading = false
 
                 // Show success toast
                 let message: String
@@ -137,6 +141,8 @@ class ServiceManager: ObservableObject {
                 self.toastQueue?.enqueue(message: message)
 
             case .failure(let error):
+                self.isLoading = false
+
                 // Only show error alerts, not cancellation
                 if case .userCancelled = error {
                     return

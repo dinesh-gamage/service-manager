@@ -16,6 +16,7 @@ class InstanceGroupManager: ObservableObject {
     @Published var isFetching: [UUID: Bool] = [:]
     @Published var instanceOutputs: [UUID: CommandOutputViewModel] = [:]
     @Published var listRefreshTrigger = UUID()
+    @Published private(set) var isLoading = false
 
     private weak var alertQueue: AlertQueue?
     private weak var toastQueue: ToastQueue?
@@ -213,6 +214,8 @@ class InstanceGroupManager: ObservableObject {
     }
 
     func importGroups() {
+        isLoading = true
+
         ImportExportManager.shared.importJSON(
             InstanceGroup.self,
             title: "Import EC2 Groups"
@@ -237,6 +240,7 @@ class InstanceGroupManager: ObservableObject {
                     }
                 }
                 self.saveGroups()
+                self.isLoading = false
 
                 // Show success toast
                 let message: String
@@ -252,6 +256,8 @@ class InstanceGroupManager: ObservableObject {
                 self.toastQueue?.enqueue(message: message)
 
             case .failure(let error):
+                self.isLoading = false
+
                 // Only show error alerts, not cancellation
                 if case .userCancelled = error {
                     return
