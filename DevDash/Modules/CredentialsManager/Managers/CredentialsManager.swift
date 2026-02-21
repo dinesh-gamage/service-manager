@@ -390,7 +390,6 @@ class CredentialsManager: ObservableObject {
                     }
 
                     self.saveCredentials()
-                    self.objectWillChange.send()
                     self.isLoading = false
 
                     // Show success toast

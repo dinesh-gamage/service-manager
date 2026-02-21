@@ -14,7 +14,6 @@ import UniformTypeIdentifiers
 class AWSVaultManager: ObservableObject {
     @Published private(set) var profiles: [AWSVaultProfile] = []
     @Published private(set) var isLoading = false
-    @Published var listRefreshTrigger = UUID()
 
     private weak var alertQueue: AlertQueue?
     private weak var toastQueue: ToastQueue?
@@ -56,8 +55,6 @@ class AWSVaultManager: ObservableObject {
             // Add to local storage
             profiles.append(updatedProfile)
             saveProfiles()
-            listRefreshTrigger = UUID()
-            objectWillChange.send()
             toastQueue?.enqueue(message: "'\(updatedProfile.name)' added")
 
             isLoading = false
@@ -89,8 +86,6 @@ class AWSVaultManager: ObservableObject {
             if let index = profiles.firstIndex(where: { $0.id == profile.id }) {
                 profiles[index] = updatedProfile
                 saveProfiles()
-                listRefreshTrigger = UUID()
-                objectWillChange.send()
                 toastQueue?.enqueue(message: "'\(updatedProfile.name)' updated")
             }
 
@@ -116,8 +111,6 @@ class AWSVaultManager: ObservableObject {
         // Always remove from local storage
         profiles.removeAll { $0.id == profile.id }
         saveProfiles()
-        listRefreshTrigger = UUID()
-        objectWillChange.send()
 
         isLoading = false
 
@@ -276,8 +269,6 @@ class AWSVaultManager: ObservableObject {
                 }
                 profiles = updatedProfiles
                 saveProfiles()
-                listRefreshTrigger = UUID()
-                objectWillChange.send()
             }
 
             return newProfiles.count
@@ -497,8 +488,6 @@ class AWSVaultManager: ObservableObject {
 
         // Save updated profiles
         saveProfiles()
-        listRefreshTrigger = UUID()
-        objectWillChange.send()
         isLoading = false
 
         if failedProfiles.isEmpty {
@@ -706,8 +695,6 @@ class AWSVaultManager: ObservableObject {
                     await MainActor.run {
                         self.profiles.append(contentsOf: importedProfiles)
                         self.saveProfiles()
-                        self.listRefreshTrigger = UUID()
-                        self.objectWillChange.send()
                         self.isLoading = false
 
                         if !importedProfiles.isEmpty {
