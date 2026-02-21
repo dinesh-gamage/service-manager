@@ -44,5 +44,11 @@ struct DevDashApp: App {
 
         // Register EC2 Manager module
         registry.register(EC2ManagerModule())
+
+        // Register Credentials Manager module
+        registry.register(CredentialsManagerModule())
+
+        // Register AWS Vault Manager module
+        registry.register(AWSVaultManagerModule())
     }
 }

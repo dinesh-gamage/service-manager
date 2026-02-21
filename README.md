@@ -6,6 +6,7 @@ A lightweight, modular macOS application for managing local development workflow
 
 - **Service Manager** - Start/stop local services, view logs, track errors/warnings, handle port conflicts
 - **EC2 Manager** - Track AWS EC2 instance IPs with aws-vault integration
+- **Credentials Manager** - Secure credential storage with Apple Keychain and biometric authentication
 
 ## Architecture
 
@@ -55,11 +56,17 @@ DevDash/
 │   │   ├── Managers/                     # ServiceManager (CRUD, persistence)
 │   │   └── Views/                        # UI components
 │   │
-│   └── EC2Manager/
-│       ├── EC2ManagerModule.swift        # Module definition + state
-│       ├── Models/                       # EC2Instance, InstanceGroup
-│       ├── Managers/                     # InstanceGroupManager
-│       └── Views/                        # UI components
+│   ├── EC2Manager/
+│   │   ├── EC2ManagerModule.swift        # Module definition + state
+│   │   ├── Models/                       # EC2Instance, InstanceGroup
+│   │   ├── Managers/                     # InstanceGroupManager
+│   │   └── Views/                        # UI components
+│   │
+│   └── CredentialsManager/
+│       ├── CredentialsManagerModule.swift # Module definition + state
+│       ├── Models/                        # Credential, CredentialField
+│       ├── Managers/                      # CredentialsManager (CRUD, Keychain)
+│       └── Views/                         # UI components
 │
 ├── ContentView.swift         # Root navigation
 └── DevDashApp.swift         # App entry point
@@ -99,6 +106,33 @@ DevDash/
    ModuleRegistry.shared.register(YourModule())
    ```
 
+### Available Modules
+
+#### Service Manager
+Manage local development services with full process lifecycle control:
+- Start/stop services with shell command execution
+- Real-time log streaming with error/warning detection
+- Port conflict detection and resolution
+- Search logs with syntax highlighting
+- Import/Export service configurations
+
+#### EC2 Manager
+Track AWS EC2 instance public IPs organized by region/environment:
+- aws-vault integration for credential management
+- Async IP fetching via AWS CLI
+- Regional grouping of instances
+- Cached IP addresses with last fetch timestamps
+- Import/Export instance group configurations
+
+#### Credentials Manager
+Secure credential storage with biometric authentication:
+- **Security**: Apple Keychain for passwords, Touch ID/Face ID authentication
+- **Organization**: Category-based organization (Databases, API Keys, SSH, etc.)
+- **Flexibility**: Custom fields with text/secret type selection
+- **Usability**: Search/filter, reveal/hide toggles, one-click copy
+- **Session Auth**: Authentication cached for app session, invalidated on background
+- **Import/Export**: Metadata only (passwords remain secure in Keychain)
+
 ### Core Components
 
 **Reusable UI Components** (`Core/Components/`):
@@ -115,6 +149,9 @@ DevDash/
 - `StorageManager` - UserDefaults persistence layer
 - `ImportExportManager` - JSON import/export with file panels
 - `AlertQueue` - Sequential alert presentation
+- `KeychainManager` - Secure storage wrapper for Apple Keychain
+- `BiometricAuthManager` - Touch ID/Face ID/Password authentication with session management
+- `AWSVaultManager` - AWS vault profile management via CLI integration
 
 **Theme System** (`Core/Theme/AppTheme.swift`):
 - Centralized typography (h1, h2, h3, body, caption)

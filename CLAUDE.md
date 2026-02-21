@@ -7,6 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 DevDash is a native macOS application built with SwiftUI for managing local development workflows. It provides:
 1. **Service Management** - Start/stop local development services, view logs, track errors/warnings, handle port conflicts
 2. **EC2 Instance IP Tracking** - Fetch and cache public IPs for AWS EC2 instances organized by region/environment groups
+3. **Credentials Management** - Secure credential storage with Apple Keychain and biometric authentication
 
 ## Development Rules
 
@@ -32,6 +33,7 @@ The app uses a **module-based architecture** where each feature is an independen
 **Current Modules:**
 - **ServiceManagerModule** (`Modules/ServiceManager/`) - Service lifecycle management
 - **EC2ManagerModule** (`Modules/EC2Manager/`) - AWS EC2 instance IP tracking
+- **CredentialsManagerModule** (`Modules/CredentialsManager/`) - Secure credential storage
 
 ### Directory Structure
 ```
@@ -102,6 +104,32 @@ Key components in `Modules/EC2Manager/`:
 - **AddInstanceView, EditInstanceView**: Instance CRUD forms
 - **InstanceGroupJSONEditorView**: Direct JSON editing
 
+### Credentials Manager Module
+
+Key components in `Modules/CredentialsManager/`:
+
+**CredentialsManagerModule.swift**:
+- **CredentialsManagerState**: Singleton managing credentials, auth state, revealed passwords/fields
+- **CredentialsManagerSidebarView**: Category filter, search bar, credential list
+- **CredentialsManagerDetailView**: Detail pane for selected credential
+
+**Models/CredentialModels.swift**:
+- **Credential**: Title, category, username, password (Keychain key), custom fields, notes
+- **CredentialField**: Custom field with key, value, isSecret flag
+- **CredentialCategory**: Predefined categories (Databases, API Keys, SSH, etc.)
+
+**Managers/CredentialsManager.swift**:
+- Manages credential CRUD operations
+- Coordinates between UserDefaults (metadata) and Keychain (secrets)
+- Import/Export functionality (metadata only, no passwords)
+- Search and filter logic
+
+**Views/**:
+- **CredentialDetailView**: Shows credential with reveal/hide toggles and copy buttons
+- **AddCredentialView**: Form for creating new credentials with password confirmation
+- **EditCredentialView**: Form for editing credentials with optional password update
+- **CredentialListItem**: Sidebar item with category icon and metadata
+
 ### Core Infrastructure
 
 **Process Management** (ServiceRuntime):
@@ -133,6 +161,18 @@ Key components in `Modules/EC2Manager/`:
 - **StorageManager**: UserDefaults persistence layer with Codable support
 - **ImportExportManager**: JSON import/export with file panels (NSSavePanel/NSOpenPanel)
 - **AlertQueue**: Sequential alert presentation to prevent overlapping dialogs
+- **KeychainManager**: Secure storage wrapper for Apple Keychain Services API
+  - Save/retrieve/delete operations
+  - Support for String and Data types
+  - Error handling with KeychainError enum
+- **BiometricAuthManager**: LocalAuthentication integration
+  - Touch ID/Face ID/Password authentication
+  - Session-based authentication caching
+  - Session invalidation on app background/terminate
+- **AWSVaultManager**: AWS vault profile management
+  - Profile metadata storage (name, region, description)
+  - Shell integration with aws-vault CLI
+  - Async credential operations
 
 **Theme System** (`Core/Theme/AppTheme.swift`):
 - Centralized typography (h1, h2, h3, body, caption)

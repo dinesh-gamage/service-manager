@@ -1,0 +1,224 @@
+//
+//  AWSVaultManagerModule.swift
+//  DevDash
+//
+//  Created by Dinesh Gamage on 2026-02-21.
+//
+
+import SwiftUI
+import Combine
+
+struct AWSVaultManagerModule: DevDashModule {
+    let id = "aws-vault-manager"
+    let name = "AWS Vault Profiles"
+    let icon = "key.horizontal.fill"
+    let description = "Manage AWS Vault profiles"
+    let accentColor = Color.orange
+
+    func makeSidebarView() -> AnyView {
+        AnyView(AWSVaultManagerSidebarView())
+    }
+
+    func makeDetailView() -> AnyView {
+        AnyView(AWSVaultManagerDetailView())
+    }
+}
+
+// MARK: - Shared State
+
+@MainActor
+class AWSVaultManagerState: ObservableObject {
+    static let shared = AWSVaultManagerState()
+
+    let alertQueue = AlertQueue()
+    @Published var manager: AWSVaultManager
+    @Published var selectedProfile: AWSVaultProfile?
+
+    // UI State
+    @Published var showingAddProfile = false
+    @Published var showingEditProfile = false
+    @Published var profileToEdit: AWSVaultProfile?
+    @Published var profileToDelete: AWSVaultProfile?
+    @Published var showingDeleteConfirmation = false
+    @Published var deleteConfirmationText = ""
+    @Published var showingHealthCheck = false
+    @Published var healthCheckResult: AWSVaultManager.KeychainHealthStatus?
+
+    private init() {
+        self.manager = AWSVaultManager(alertQueue: alertQueue)
+    }
+
+    // MARK: - Helper Methods
+
+    func copyToClipboard(_ text: String, fieldName: String) async {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+
+        alertQueue.enqueue(title: "Copied", message: "\(fieldName) copied to clipboard")
+    }
+}
+
+// MARK: - Sidebar View
+
+struct AWSVaultManagerSidebarView: View {
+    @ObservedObject var state = AWSVaultManagerState.shared
+
+    var body: some View {
+        ModuleSidebarList(
+            toolbarButtons: [
+                ToolbarButtonConfig(icon: "plus.circle", help: "Add Profile") {
+                    state.showingAddProfile = true
+                },
+                ToolbarButtonConfig(icon: "arrow.triangle.2.circlepath", help: "Sync from aws-vault") {
+                    Task {
+                        let count = await state.manager.syncFromAWSVault()
+                        if count > 0 {
+                            state.alertQueue.enqueue(title: "Sync Complete", message: "Synced \(count) new profile(s) from aws-vault")
+                        } else {
+                            state.alertQueue.enqueue(title: "Sync Complete", message: "No new profiles found")
+                        }
+                    }
+                },
+                ToolbarButtonConfig(icon: "stethoscope", help: "Check Keychain Health") {
+                    Task {
+                        let result = await state.manager.checkKeychainHealth()
+                        state.healthCheckResult = result
+                        state.showingHealthCheck = true
+                    }
+                },
+                ToolbarButtonConfig(icon: "square.and.arrow.down", help: "Import Profiles") {
+                    state.manager.importProfiles()
+                },
+                ToolbarButtonConfig(icon: "square.and.arrow.up", help: "Export Profiles") {
+                    state.manager.exportProfiles()
+                }
+            ],
+            items: state.manager.profiles,
+            emptyState: EmptyStateConfig(
+                icon: "key.horizontal",
+                title: "No AWS Vault Profiles",
+                subtitle: "Add a profile to get started",
+                buttonText: "Add Profile",
+                buttonIcon: "plus",
+                buttonAction: { state.showingAddProfile = true }
+            ),
+            selectedItem: $state.selectedProfile,
+            refreshTrigger: state.manager.listRefreshTrigger
+        ) { profile, isSelected in
+            return ModuleSidebarListItem(
+                icon: .image(systemName: "key.horizontal.fill", color: .accentColor),
+                title: profile.name,
+                subtitle: profile.region,
+                badge: nil,
+                actions: [
+                    ListItemAction(icon: "pencil", variant: .primary, tooltip: "Edit") {
+                        state.profileToEdit = profile
+                        state.showingEditProfile = true
+                    },
+                    ListItemAction(icon: "trash", variant: .danger, tooltip: "Delete") {
+                        state.profileToDelete = profile
+                        state.showingDeleteConfirmation = true
+                        state.deleteConfirmationText = ""
+                    }
+                ],
+                isSelected: isSelected,
+                onTap: { state.selectedProfile = profile }
+            )
+        }
+        .sheet(isPresented: $state.showingAddProfile) {
+            AddAWSVaultProfileView(manager: state.manager)
+        }
+        .sheet(isPresented: $state.showingEditProfile, onDismiss: {
+            // Refresh selected profile after edit
+            if let profileId = state.profileToEdit?.id {
+                state.selectedProfile = state.manager.profiles.first(where: { $0.id == profileId })
+            }
+            state.profileToEdit = nil
+        }) {
+            if let profile = state.profileToEdit {
+                EditAWSVaultProfileView(manager: state.manager, profile: profile)
+            }
+        }
+        .alertQueue(state.alertQueue)
+        .alert("Delete Profile", isPresented: $state.showingDeleteConfirmation) {
+            TextField("Type 'confirm'", text: $state.deleteConfirmationText)
+            Button("Cancel", role: .cancel) {
+                state.profileToDelete = nil
+                state.deleteConfirmationText = ""
+            }
+            Button("Delete", role: .destructive) {
+                if let profile = state.profileToDelete {
+                    Task {
+                        await state.manager.deleteProfile(profile)
+                        if state.selectedProfile?.id == profile.id {
+                            state.selectedProfile = nil
+                        }
+                        state.profileToDelete = nil
+                        state.deleteConfirmationText = ""
+                    }
+                }
+            }
+            .disabled(state.deleteConfirmationText.lowercased() != "confirm")
+        } message: {
+            if let profile = state.profileToDelete {
+                Text("This will remove '\(profile.name)' from both DevDash and aws-vault. Type 'confirm' to proceed.")
+            }
+        }
+        .alert("Keychain Health Check", isPresented: $state.showingHealthCheck) {
+            Button("OK", role: .cancel) {
+                state.healthCheckResult = nil
+            }
+        } message: {
+            if let result = state.healthCheckResult {
+                if result.isHealthy {
+                    if !result.keychainExists {
+                        Text(result.errorMessage ?? "Keychain not created yet")
+                    } else {
+                        Text("✅ AWS Vault keychain is healthy!\n\n• Keychain exists\n• In search list\n• Access working")
+                    }
+                } else {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(result.errorMessage ?? "Unknown issue")
+
+                        if let recommendation = result.recommendation {
+                            Text("\n\(recommendation)")
+                        }
+                    }
+                }
+            }
+        }
+        .onAppear {
+            AppTheme.AccentColor.shared.set(.orange)
+        }
+    }
+}
+
+// MARK: - Detail View
+
+struct AWSVaultManagerDetailView: View {
+    @ObservedObject var state = AWSVaultManagerState.shared
+
+    var body: some View {
+        if let profile = state.selectedProfile {
+            ProfileDetailView(profile: profile)
+                .id(profile.id)
+        } else {
+            VStack(spacing: 16) {
+                Image(systemName: "key.horizontal")
+                    .font(.system(size: 64))
+                    .foregroundColor(.secondary)
+
+                Text("Select a Profile")
+                    .font(.title2)
+                    .foregroundColor(.secondary)
+
+                Text("Choose a profile from the sidebar to view details")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+}
+
