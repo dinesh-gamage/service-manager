@@ -45,8 +45,16 @@ class AWSVaultManagerState: ObservableObject {
     @Published var showingHealthCheck = false
     @Published var healthCheckResult: AWSVaultManager.KeychainHealthStatus?
 
+    private var cancellables = Set<AnyCancellable>()
+
     private init() {
         self.manager = AWSVaultManager(alertQueue: alertQueue, toastQueue: toastQueue)
+
+        // Forward manager changes to state
+        manager.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
+        .store(in: &cancellables)
     }
 
     // MARK: - Helper Methods
