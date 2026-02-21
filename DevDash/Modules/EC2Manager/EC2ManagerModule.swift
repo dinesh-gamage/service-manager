@@ -22,6 +22,21 @@ struct EC2ManagerModule: DevDashModule {
     func makeDetailView() -> AnyView {
         AnyView(EC2ManagerDetailView())
     }
+
+    // MARK: - Backup Support
+
+    var backupFileName: String {
+        "ec2-groups.json"
+    }
+
+    func exportForBackup() async throws -> Data {
+        let manager = EC2ManagerState.shared.manager
+        let groups = manager.groups
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return try encoder.encode(groups)
+    }
 }
 
 // MARK: - Shared State

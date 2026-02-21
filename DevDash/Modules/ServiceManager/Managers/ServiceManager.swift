@@ -148,20 +148,31 @@ class ServiceManager: ObservableObject {
     // MARK: - Import/Export
 
     func exportServices() {
-        let configs = runtimes.values.map { $0.config }
-        ImportExportManager.shared.exportJSON(
-            configs,
-            defaultFileName: "services.json",
-            title: "Export Services"
-        ) { [weak self] result in
-            switch result {
-            case .success:
-                self?.toastQueue?.enqueue(message: "Services exported successfully")
-            case .failure(let error):
-                if case .userCancelled = error {
-                    return
+        Task {
+            do {
+                // Require biometric auth before export
+                try await BiometricAuthManager.shared.authenticate(reason: "Authenticate to export services")
+
+                let configs = runtimes.values.map { $0.config }
+                ImportExportManager.shared.exportJSON(
+                    configs,
+                    defaultFileName: "services.json",
+                    title: "Export Services"
+                ) { [weak self] result in
+                    switch result {
+                    case .success:
+                        self?.toastQueue?.enqueue(message: "Services exported successfully")
+                    case .failure(let error):
+                        if case .userCancelled = error {
+                            return
+                        }
+                        self?.alertQueue?.enqueue(title: "Export Failed", message: error.localizedDescription)
+                    }
                 }
-                self?.alertQueue?.enqueue(title: "Export Failed", message: error.localizedDescription)
+            } catch {
+                await MainActor.run {
+                    self.alertQueue?.enqueue(title: "Authentication Required", message: "You must authenticate to export services")
+                }
             }
         }
     }

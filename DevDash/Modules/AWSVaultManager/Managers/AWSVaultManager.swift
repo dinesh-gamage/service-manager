@@ -551,7 +551,7 @@ class AWSVaultManager: ObservableObject {
 
     // MARK: - Import/Export
 
-    private func retrieveCredentialsFromKeychain(profileName: String) throws -> (accessKeyId: String, secretAccessKey: String) {
+    func retrieveCredentialsFromKeychain(profileName: String) throws -> (accessKeyId: String, secretAccessKey: String) {
         let keychainPath = NSString(string: "~/Library/Keychains/aws-vault.keychain-db").expandingTildeInPath
 
         let process = Process()
@@ -593,48 +593,59 @@ class AWSVaultManager: ObservableObject {
     }
 
     func exportProfiles() {
-        let panel = NSSavePanel()
-        panel.title = "Export AWS Vault Profiles"
-        panel.nameFieldStringValue = "aws-vault-profiles-\(Date().timeIntervalSince1970).json"
-        panel.allowedContentTypes = [.json]
+        Task {
+            do {
+                // Require biometric auth before export
+                try await BiometricAuthManager.shared.authenticate(reason: "Authenticate to export AWS Vault profiles")
 
-        panel.begin { response in
-            guard response == .OK, let url = panel.url else { return }
+                let panel = NSSavePanel()
+                panel.title = "Export AWS Vault Profiles"
+                panel.nameFieldStringValue = "aws-vault-profiles-\(Date().timeIntervalSince1970).json"
+                panel.allowedContentTypes = [.json]
 
-            Task {
-                do {
-                    var exportData: [[String: Any]] = []
+                panel.begin { response in
+                    guard response == .OK, let url = panel.url else { return }
 
-                    for profile in self.profiles {
-                        var profileData: [String: Any] = [
-                            "id": profile.id.uuidString,
-                            "name": profile.name,
-                            "createdAt": profile.createdAt.timeIntervalSince1970,
-                            "lastModified": profile.lastModified.timeIntervalSince1970
-                        ]
+                    Task {
+                        do {
+                            var exportData: [[String: Any]] = []
 
-                        if let region = profile.region { profileData["region"] = region }
-                        if let desc = profile.description { profileData["description"] = desc }
+                            for profile in self.profiles {
+                                var profileData: [String: Any] = [
+                                    "id": profile.id.uuidString,
+                                    "name": profile.name,
+                                    "createdAt": profile.createdAt.timeIntervalSince1970,
+                                    "lastModified": profile.lastModified.timeIntervalSince1970
+                                ]
 
-                        // Try to retrieve credentials from keychain
-                        if let creds = try? self.retrieveCredentialsFromKeychain(profileName: profile.name) {
-                            profileData["accessKeyId"] = creds.accessKeyId
-                            profileData["secretAccessKey"] = creds.secretAccessKey
+                                if let region = profile.region { profileData["region"] = region }
+                                if let desc = profile.description { profileData["description"] = desc }
+
+                                // Try to retrieve credentials from keychain
+                                if let creds = try? self.retrieveCredentialsFromKeychain(profileName: profile.name) {
+                                    profileData["accessKeyId"] = creds.accessKeyId
+                                    profileData["secretAccessKey"] = creds.secretAccessKey
+                                }
+
+                                exportData.append(profileData)
+                            }
+
+                            let jsonData = try JSONSerialization.data(withJSONObject: exportData, options: [.prettyPrinted])
+                            try jsonData.write(to: url)
+
+                            await MainActor.run {
+                                self.toastQueue?.enqueue(message: "Exported \(self.profiles.count) profile\(self.profiles.count == 1 ? "" : "s") with credentials")
+                            }
+                        } catch {
+                            await MainActor.run {
+                                self.alertQueue?.enqueue(title: "Export Failed", message: error.localizedDescription)
+                            }
                         }
-
-                        exportData.append(profileData)
                     }
-
-                    let jsonData = try JSONSerialization.data(withJSONObject: exportData, options: [.prettyPrinted])
-                    try jsonData.write(to: url)
-
-                    await MainActor.run {
-                        self.toastQueue?.enqueue(message: "Exported \(self.profiles.count) profile\(self.profiles.count == 1 ? "" : "s") with credentials")
-                    }
-                } catch {
-                    await MainActor.run {
-                        self.alertQueue?.enqueue(title: "Export Failed", message: error.localizedDescription)
-                    }
+                }
+            } catch {
+                await MainActor.run {
+                    self.alertQueue?.enqueue(title: "Authentication Required", message: "You must authenticate to export AWS Vault profiles")
                 }
             }
         }

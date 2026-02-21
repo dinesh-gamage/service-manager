@@ -22,6 +22,40 @@ struct AWSVaultManagerModule: DevDashModule {
     func makeDetailView() -> AnyView {
         AnyView(AWSVaultManagerDetailView())
     }
+
+    // MARK: - Backup Support
+
+    var backupFileName: String {
+        "aws-vault-profiles.json"
+    }
+
+    func exportForBackup() async throws -> Data {
+        let manager = AWSVaultManagerState.shared.manager
+        var exportData: [[String: Any]] = []
+
+        for profile in manager.profiles {
+            var profileData: [String: Any] = [
+                "id": profile.id.uuidString,
+                "name": profile.name,
+                "createdAt": profile.createdAt.timeIntervalSince1970,
+                "lastModified": profile.lastModified.timeIntervalSince1970
+            ]
+
+            if let region = profile.region { profileData["region"] = region }
+            if let desc = profile.description { profileData["description"] = desc }
+
+            // Try to retrieve credentials from keychain
+            if let creds = try? manager.retrieveCredentialsFromKeychain(profileName: profile.name) {
+                profileData["accessKeyId"] = creds.accessKeyId
+                profileData["secretAccessKey"] = creds.secretAccessKey
+            }
+
+            exportData.append(profileData)
+        }
+
+        let jsonData = try JSONSerialization.data(withJSONObject: exportData, options: [.prettyPrinted, .sortedKeys])
+        return jsonData
+    }
 }
 
 // MARK: - Shared State

@@ -22,6 +22,69 @@ struct CredentialsManagerModule: DevDashModule {
     func makeDetailView() -> AnyView {
         AnyView(CredentialsManagerDetailView())
     }
+
+    // MARK: - Backup Support
+
+    var backupFileName: String {
+        "credentials.json"
+    }
+
+    func exportForBackup() async throws -> Data {
+        let manager = CredentialsManagerState.shared.manager
+        let keychainManager = KeychainManager.shared
+
+        // Export with all secrets from Keychain
+        let exportData = try manager.credentials.map { credential -> [String: Any] in
+            var data: [String: Any] = [
+                "id": credential.id.uuidString,
+                "title": credential.title,
+                "category": credential.category,
+                "username": credential.username as Any,
+                "notes": credential.notes as Any,
+                "url": credential.url as Any,
+                "createdAt": credential.createdAt.timeIntervalSince1970,
+                "lastModified": credential.lastModified.timeIntervalSince1970
+            ]
+
+            // Include password from Keychain
+            if let password: String = try? keychainManager.retrieve(credential.passwordKeychainKey) {
+                data["password"] = password
+            }
+
+            // Include access token if exists
+            if let accessTokenKey = credential.accessTokenKeychainKey,
+               let accessToken: String = try? keychainManager.retrieve(accessTokenKey) {
+                data["accessToken"] = accessToken
+            }
+
+            // Include recovery codes if exists
+            if let recoveryCodesKey = credential.recoveryCodesKeychainKey,
+               let recoveryCodes: String = try? keychainManager.retrieve(recoveryCodesKey) {
+                data["recoveryCodes"] = recoveryCodes
+            }
+
+            // Include all fields (including secret ones from Keychain)
+            data["additionalFields"] = try credential.additionalFields.map { field -> [String: Any] in
+                var fieldData: [String: Any] = ["key": field.key, "isSecret": field.isSecret]
+                if field.isSecret {
+                    // Retrieve secret value from Keychain
+                    if let secretValue: String = try? keychainManager.retrieve(field.keychainKey) {
+                        fieldData["value"] = secretValue
+                    } else {
+                        fieldData["value"] = ""
+                    }
+                } else {
+                    fieldData["value"] = field.value
+                }
+                return fieldData
+            }
+
+            return data
+        }
+
+        let jsonData = try JSONSerialization.data(withJSONObject: exportData, options: [.prettyPrinted, .sortedKeys])
+        return jsonData
+    }
 }
 
 // MARK: - Shared State
@@ -263,6 +326,9 @@ struct CredentialsManagerSidebarView: View {
                         CredentialListItem(
                             credential: credential,
                             isSelected: state.selectedCredential?.id == credential.id,
+                            onTap: {
+                                state.selectedCredential = credential
+                            },
                             onDelete: {
                                 state.credentialToDelete = credential
                                 state.showingDeleteConfirmation = true
@@ -272,9 +338,6 @@ struct CredentialsManagerSidebarView: View {
                                 state.showingEditCredential = true
                             }
                         )
-                        .onTapGesture {
-                            state.selectedCredential = credential
-                        }
                     }
                 }
                 .listStyle(.plain)
@@ -375,6 +438,7 @@ struct CategoryFilterButton: View {
 struct CredentialListItem: View {
     let credential: Credential
     let isSelected: Bool
+    let onTap: () -> Void
     let onDelete: () -> Void
     let onEdit: () -> Void
 
@@ -393,7 +457,7 @@ struct CredentialListItem: View {
                 ListItemAction(icon: "trash", variant: .danger, tooltip: "Delete", action: onDelete)
             ],
             isSelected: isSelected,
-            onTap: {}
+            onTap: onTap
         )
     }
 

@@ -77,23 +77,65 @@ struct ContentView: View {
                 // Sidebar content
                 if showingModuleList {
                     // Show module list
-                    List {
-                        Section("Modules") {
-                            ForEach(registry.modules, id: \.id) { module in
-                                Button(action: {
-                                    withAnimation {
-                                        selectedModuleId = module.id
-                                        showingModuleList = false
+                    VStack(spacing: 0) {
+                        List {
+                            Section("Modules") {
+                                ForEach(registry.modules.filter { $0.id != "settings" }, id: \.id) { module in
+                                    Button(action: {
+                                        withAnimation {
+                                            selectedModuleId = module.id
+                                            showingModuleList = false
+                                        }
+                                    }) {
+                                        ModuleListItem(module: module)
                                     }
-                                }) {
-                                    ModuleListItem(module: module)
+                                    .buttonStyle(.plain)
+                                    .listRowSeparator(.hidden)
                                 }
-                                .buttonStyle(.plain)
-                                .listRowSeparator(.hidden)
                             }
                         }
+                        .listStyle(.plain)
+
+                        // Settings button at bottom
+                        Divider()
+
+                        HStack(spacing: 12) {
+                            Image(systemName: "gearshape.fill")
+                                .font(.title3)
+                                .foregroundColor(.purple)
+                                .frame(width: 32, height: 32)
+                                .background(Color.purple.opacity(selectedModuleId == "settings" ? 0.2 : 0.1))
+                                .cornerRadius(8)
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Settings")
+                                    .font(.body)
+                                    .fontWeight(.medium)
+
+                                Text("Backup and configuration")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .lineLimit(1)
+                            }
+
+                            Spacer()
+                        }
+                        .padding(.vertical, 6)
+                        .padding(.horizontal, 8)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(selectedModuleId == "settings" ? Color.purple.opacity(0.08) : AppTheme.clearColor)
+                        )
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            withAnimation {
+                                selectedModuleId = "settings"
+                                showingModuleList = false
+                            }
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
                     }
-                    .listStyle(.plain)
                 } else if let module = selectedModule {
                     // Module name section
                     VStack(spacing: 0) {

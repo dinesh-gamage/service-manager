@@ -58,7 +58,7 @@ class ImportExportManager {
 
     private init() {}
 
-    /// Import items from JSON file with file picker
+    /// Import items from JSON file with file picker (supports both plain JSON and encrypted files)
     /// - Parameters:
     ///   - type: Type of items to import
     ///   - title: Dialog title
@@ -69,7 +69,7 @@ class ImportExportManager {
         completion: @escaping (Result<[T], ImportError>) -> Void
     ) {
         let openPanel = NSOpenPanel()
-        openPanel.allowedContentTypes = [.json]
+        openPanel.allowedContentTypes = [.json, UTType(filenameExtension: "enc")!]
         openPanel.allowsMultipleSelection = false
         openPanel.title = title
 
@@ -91,11 +91,30 @@ class ImportExportManager {
             }
 
             // Read file
-            guard let jsonData = try? Data(contentsOf: url) else {
+            guard let fileData = try? Data(contentsOf: url) else {
                 DispatchQueue.main.async {
                     completion(.failure(.fileReadFailed))
                 }
                 return
+            }
+
+            // Check if file is encrypted (.enc extension)
+            let isEncrypted = url.pathExtension == "enc"
+
+            var jsonData: Data
+            if isEncrypted {
+                // Decrypt the file
+                do {
+                    jsonData = try FileEncryption.shared.decrypt(fileData)
+                } catch {
+                    DispatchQueue.main.async {
+                        completion(.failure(.jsonDecodeFailed))  // Decryption failed
+                    }
+                    return
+                }
+            } else {
+                // Plain JSON
+                jsonData = fileData
             }
 
             // Decode JSON

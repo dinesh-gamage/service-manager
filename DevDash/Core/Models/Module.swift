@@ -22,6 +22,15 @@ protocol DevDashModule: Identifiable {
 
     @ViewBuilder
     func makeDetailView() -> AnyView   // Module's detail/main content
+
+    // MARK: - Backup Support
+
+    /// Filename for this module's backup (e.g., "services.json")
+    var backupFileName: String { get }
+
+    /// Export full data for backup (including secrets)
+    /// - Returns: JSON data ready for encryption and S3 upload
+    func exportForBackup() async throws -> Data
 }
 
 // MARK: - Module Registry

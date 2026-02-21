@@ -50,5 +50,8 @@ struct DevDashApp: App {
 
         // Register AWS Vault Manager module
         registry.register(AWSVaultManagerModule())
+
+        // Register Settings module
+        registry.register(SettingsModule())
     }
 }

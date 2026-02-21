@@ -273,37 +273,81 @@ class CredentialsManager: ObservableObject {
     // MARK: - Import/Export
 
     func exportCredentials() {
-        let panel = NSSavePanel()
-        panel.title = "Export Credentials"
-        panel.nameFieldStringValue = "credentials-\(Date().timeIntervalSince1970).json"
-        panel.allowedContentTypes = [.json]
-
-        panel.begin { response in
-            guard response == .OK, let url = panel.url else { return }
-
+        Task {
             do {
-                // Export metadata only (no passwords or secret fields)
-                let exportData = self.credentials.map { credential -> [String: Any] in
-                    return [
-                        "id": credential.id.uuidString,
-                        "title": credential.title,
-                        "category": credential.category,
-                        "username": credential.username as Any,
-                        "additionalFields": credential.additionalFields.filter { !$0.isSecret }.map { field in
-                            ["key": field.key, "value": field.value]
-                        },
-                        "notes": credential.notes as Any,
-                        "createdAt": credential.createdAt.timeIntervalSince1970,
-                        "lastModified": credential.lastModified.timeIntervalSince1970
-                    ]
+                // Require biometric auth before export
+                try await BiometricAuthManager.shared.authenticate(reason: "Authenticate to export credentials")
+
+                let panel = NSSavePanel()
+                panel.title = "Export Credentials"
+                panel.nameFieldStringValue = "credentials-\(Date().timeIntervalSince1970).json"
+                panel.allowedContentTypes = [.json]
+
+                panel.begin { response in
+                    guard response == .OK, let url = panel.url else { return }
+
+                    do {
+                        // Export with all secrets from Keychain
+                        let exportData = try self.credentials.map { credential -> [String: Any] in
+                            var data: [String: Any] = [
+                                "id": credential.id.uuidString,
+                                "title": credential.title,
+                                "category": credential.category,
+                                "username": credential.username as Any,
+                                "notes": credential.notes as Any,
+                                "url": credential.url as Any,
+                                "createdAt": credential.createdAt.timeIntervalSince1970,
+                                "lastModified": credential.lastModified.timeIntervalSince1970
+                            ]
+
+                            // Include password from Keychain
+                            if let password: String = try? self.keychainManager.retrieve(credential.passwordKeychainKey) {
+                                data["password"] = password
+                            }
+
+                            // Include access token if exists
+                            if let accessTokenKey = credential.accessTokenKeychainKey,
+                               let accessToken: String = try? self.keychainManager.retrieve(accessTokenKey) {
+                                data["accessToken"] = accessToken
+                            }
+
+                            // Include recovery codes if exists
+                            if let recoveryCodesKey = credential.recoveryCodesKeychainKey,
+                               let recoveryCodes: String = try? self.keychainManager.retrieve(recoveryCodesKey) {
+                                data["recoveryCodes"] = recoveryCodes
+                            }
+
+                            // Include all fields (including secret ones from Keychain)
+                            data["additionalFields"] = try credential.additionalFields.map { field -> [String: Any] in
+                                var fieldData: [String: Any] = ["key": field.key, "isSecret": field.isSecret]
+                                if field.isSecret {
+                                    // Retrieve secret value from Keychain
+                                    if let secretValue: String = try? self.keychainManager.retrieve(field.keychainKey) {
+                                        fieldData["value"] = secretValue
+                                    } else {
+                                        fieldData["value"] = ""
+                                    }
+                                } else {
+                                    fieldData["value"] = field.value
+                                }
+                                return fieldData
+                            }
+
+                            return data
+                        }
+
+                        let jsonData = try JSONSerialization.data(withJSONObject: exportData, options: [.prettyPrinted])
+                        try jsonData.write(to: url)
+
+                        self.toastQueue?.enqueue(message: "Credentials exported with all secrets")
+                    } catch {
+                        self.alertQueue?.enqueue(title: "Export Failed", message: error.localizedDescription)
+                    }
                 }
-
-                let jsonData = try JSONSerialization.data(withJSONObject: exportData, options: [.prettyPrinted])
-                try jsonData.write(to: url)
-
-                self.toastQueue?.enqueue(message: "Credentials exported (passwords not included)")
             } catch {
-                self.alertQueue?.enqueue(title: "Export Failed", message: error.localizedDescription)
+                await MainActor.run {
+                    self.alertQueue?.enqueue(title: "Authentication Required", message: "You must authenticate to export credentials")
+                }
             }
         }
     }

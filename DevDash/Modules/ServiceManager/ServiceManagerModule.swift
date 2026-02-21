@@ -22,6 +22,21 @@ struct ServiceManagerModule: DevDashModule {
     func makeDetailView() -> AnyView {
         AnyView(ServiceManagerDetailView())
     }
+
+    // MARK: - Backup Support
+
+    var backupFileName: String {
+        "services.json"
+    }
+
+    func exportForBackup() async throws -> Data {
+        let manager = ServiceManagerState.shared.manager
+        let configs = manager.services.map { $0.config }
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return try encoder.encode(configs)
+    }
 }
 
 // MARK: - Shared State

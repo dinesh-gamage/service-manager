@@ -496,19 +496,30 @@ class InstanceGroupManager: ObservableObject {
     // MARK: - Import/Export
 
     func exportGroups() {
-        ImportExportManager.shared.exportJSON(
-            groups,
-            defaultFileName: "ec2-groups.json",
-            title: "Export EC2 Groups"
-        ) { [weak self] result in
-            switch result {
-            case .success:
-                self?.toastQueue?.enqueue(message: "Groups exported successfully")
-            case .failure(let error):
-                if case .userCancelled = error {
-                    return
+        Task {
+            do {
+                // Require biometric auth before export
+                try await BiometricAuthManager.shared.authenticate(reason: "Authenticate to export EC2 groups")
+
+                ImportExportManager.shared.exportJSON(
+                    groups,
+                    defaultFileName: "ec2-groups.json",
+                    title: "Export EC2 Groups"
+                ) { [weak self] result in
+                    switch result {
+                    case .success:
+                        self?.toastQueue?.enqueue(message: "Groups exported successfully")
+                    case .failure(let error):
+                        if case .userCancelled = error {
+                            return
+                        }
+                        self?.alertQueue?.enqueue(title: "Export Failed", message: error.localizedDescription)
+                    }
                 }
-                self?.alertQueue?.enqueue(title: "Export Failed", message: error.localizedDescription)
+            } catch {
+                await MainActor.run {
+                    self.alertQueue?.enqueue(title: "Authentication Required", message: "You must authenticate to export EC2 groups")
+                }
             }
         }
     }
