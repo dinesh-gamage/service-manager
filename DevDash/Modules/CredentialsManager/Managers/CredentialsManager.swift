@@ -324,7 +324,8 @@ class CredentialsManager: ObservableObject {
                     let data = try Data(contentsOf: url)
                     let jsonArray = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] ?? []
 
-                    var importedCredentials: [Credential] = []
+                    var newCount = 0
+                    var updatedCount = 0
 
                     for item in jsonArray {
                         guard let title = item["title"] as? String,
@@ -346,40 +347,64 @@ class CredentialsManager: ObservableObject {
                             )
                         }
 
-                        // Create credential with empty password (user must set it manually)
-                        let credentialId = UUID()
-                        let passwordKey = Credential.passwordKeychainKey(for: credentialId)
+                        // Check if credential with same title exists
+                        if let index = self.credentials.firstIndex(where: { $0.title == title }) {
+                            // Replace existing credential
+                            let existingCredential = self.credentials[index]
 
-                        // Save empty password to keychain
-                        try? self.keychainManager.save("", for: passwordKey)
+                            var updatedCredential = existingCredential
+                            updatedCredential.title = title
+                            updatedCredential.category = category
+                            updatedCredential.url = url
+                            updatedCredential.username = username
+                            updatedCredential.additionalFields = fields
+                            updatedCredential.notes = notes
+                            updatedCredential.lastModified = Date()
 
-                        let credential = Credential(
-                            id: credentialId,
-                            title: title,
-                            category: category,
-                            url: url,
-                            username: username,
-                            passwordKeychainKey: passwordKey,
-                            accessTokenKeychainKey: nil,
-                            recoveryCodesKeychainKey: nil,
-                            additionalFields: fields,
-                            notes: notes
-                        )
+                            self.credentials[index] = updatedCredential
+                            updatedCount += 1
+                        } else {
+                            // Create new credential with empty password (user must set it manually)
+                            let credentialId = UUID()
+                            let passwordKey = Credential.passwordKeychainKey(for: credentialId)
 
-                        importedCredentials.append(credential)
+                            // Save empty password to keychain
+                            try? self.keychainManager.save("", for: passwordKey)
+
+                            let credential = Credential(
+                                id: credentialId,
+                                title: title,
+                                category: category,
+                                url: url,
+                                username: username,
+                                passwordKeychainKey: passwordKey,
+                                accessTokenKeychainKey: nil,
+                                recoveryCodesKeychainKey: nil,
+                                additionalFields: fields,
+                                notes: notes
+                            )
+
+                            self.credentials.append(credential)
+                            newCount += 1
+                        }
                     }
 
-                    // Single update at the end
-                    self.credentials.append(contentsOf: importedCredentials)
                     self.saveCredentials()
                     self.objectWillChange.send()
                     self.isLoading = false
 
-                    if !importedCredentials.isEmpty {
-                        self.toastQueue?.enqueue(message: "Imported \(importedCredentials.count) credential\(importedCredentials.count == 1 ? "" : "s") (set passwords manually)")
+                    // Show success toast
+                    let message: String
+                    if newCount > 0 && updatedCount > 0 {
+                        message = "Imported \(newCount) new, updated \(updatedCount) existing (set passwords manually)"
+                    } else if newCount > 0 {
+                        message = "Imported \(newCount) new credential\(newCount == 1 ? "" : "s") (set passwords manually)"
+                    } else if updatedCount > 0 {
+                        message = "Updated \(updatedCount) credential\(updatedCount == 1 ? "" : "s") (set passwords manually)"
                     } else {
-                        self.toastQueue?.enqueue(message: "No credentials imported")
+                        message = "No credentials imported"
                     }
+                    self.toastQueue?.enqueue(message: message)
                 } catch {
                     self.isLoading = false
                     self.alertQueue?.enqueue(title: "Import Failed", message: error.localizedDescription)

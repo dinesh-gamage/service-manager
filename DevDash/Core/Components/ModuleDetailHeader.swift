@@ -33,7 +33,7 @@ struct ModuleDetailHeader<ActionContent: View, StatusContent: View>: View {
     let statusContent: () -> StatusContent
     let metadata: [MetadataRow]
 
-    @State private var isMetadataExpanded: Bool = false
+    @State private var isMetadataExpanded: Bool = true
 
     init(
         title: String,

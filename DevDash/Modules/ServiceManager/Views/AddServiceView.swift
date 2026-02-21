@@ -13,7 +13,7 @@ struct AddServiceView: View {
 
     @State private var name = ""
     @State private var command = ""
-    @State private var workingDirectory = ""
+    @State private var workingDirectory = NSHomeDirectory()
     @State private var port = ""
     @State private var envVars: [EnvVar] = []
     @State private var prerequisites: [PrerequisiteCommand] = []

@@ -118,7 +118,7 @@ struct InstanceGroupDetailView: View {
                 }
                 .width(min: 80, ideal: 100, max: 120)
 
-                TableColumn("") { instance in
+                TableColumn("Actions") { instance in
                     HStack(spacing: 6) {
                         // View Output button (only if output exists)
                         if manager.instanceOutputs[instance.id] != nil {
@@ -137,6 +137,32 @@ struct InstanceGroupDetailView: View {
                             }
                         }
 
+                        if manager.isRestarting[instance.id] == true {
+                            ProgressView()
+                                .scaleEffect(0.7)
+                        } else {
+                            VariantButton(icon: "arrow.counterclockwise.circle", variant: .primary, tooltip: "Restart Instance") {
+                                state.selectedGroupForInstance = group
+                                state.instanceToRestart = instance
+                                state.restartConfirmationText = ""
+                                state.showingRestartInstanceConfirmation = true
+                            }
+                        }
+
+                        if manager.isCheckingHealth[instance.id] == true {
+                            ProgressView()
+                                .scaleEffect(0.7)
+                        } else {
+                            VariantButton(icon: "heart.text.square", variant: .secondary, tooltip: "Health Check") {
+                                manager.checkInstanceHealth(group: group, instance: instance)
+                            }
+                        }
+                    }
+                }
+                .width(min: 200, ideal: 200, max: 200)
+
+                TableColumn("") { instance in
+                    HStack(spacing: 6) {
                         VariantButton(icon: "pencil", variant: .secondary, tooltip: "Edit Instance") {
                             state.selectedGroupForInstance = group
                             state.instanceToEdit = instance
@@ -150,7 +176,7 @@ struct InstanceGroupDetailView: View {
                         }
                     }
                 }
-                .width(min: 160, ideal: 160, max: 160)
+                .width(min: 80, ideal: 80, max: 80)
                     }
                     .padding()
                 }
@@ -182,6 +208,28 @@ struct InstanceGroupDetailView: View {
         } message: {
             if let instance = state.instanceToDelete {
                 Text("Are you sure you want to delete '\(instance.name)' (\(instance.instanceId))?")
+            }
+        }
+        .alert("Restart Instance", isPresented: $state.showingRestartInstanceConfirmation) {
+            TextField("Type 'confirm' to restart", text: $state.restartConfirmationText)
+            Button("Cancel", role: .cancel) {
+                state.instanceToRestart = nil
+                state.selectedGroupForInstance = nil
+                state.restartConfirmationText = ""
+            }
+            Button("Restart", role: .destructive) {
+                if let selectedGroup = state.selectedGroupForInstance,
+                   let instance = state.instanceToRestart {
+                    manager.restartInstance(group: selectedGroup, instance: instance)
+                    state.instanceToRestart = nil
+                    state.selectedGroupForInstance = nil
+                    state.restartConfirmationText = ""
+                }
+            }
+            .disabled(state.restartConfirmationText.lowercased() != "confirm")
+        } message: {
+            if let instance = state.instanceToRestart {
+                Text("This will stop and restart '\(instance.name)' (\(instance.instanceId)). The instance will be temporarily unavailable.\n\nType 'confirm' to proceed.")
             }
         }
         } else {

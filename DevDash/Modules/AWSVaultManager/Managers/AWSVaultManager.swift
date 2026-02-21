@@ -35,6 +35,10 @@ class AWSVaultManager: ObservableObject {
         StorageManager.shared.save(profiles, forKey: "awsVaultProfiles")
     }
 
+    func getProfileNames() -> [String] {
+        return profiles.map { $0.name }
+    }
+
     func addProfile(_ profile: AWSVaultProfile, accessKeyId: String?, secretAccessKey: String?) async {
         isLoading = true
 

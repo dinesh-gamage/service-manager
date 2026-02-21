@@ -10,6 +10,7 @@ import SwiftUI
 struct EditInstanceGroupView: View {
     @Environment(\.dismiss) var dismiss
     @ObservedObject var manager: InstanceGroupManager
+    @ObservedObject var awsVaultState = AWSVaultManagerState.shared
     let group: InstanceGroup
 
     @State private var name: String
@@ -34,8 +35,21 @@ struct EditInstanceGroupView: View {
                     TextField("AWS Region (e.g., ap-southeast-1)", text: $region)
                         .textFieldStyle(.roundedBorder)
 
-                    TextField("AWS Profile", text: $awsProfile)
-                        .textFieldStyle(.roundedBorder)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Picker("AWS Profile", selection: $awsProfile) {
+                            Text("Select a profile").tag("")
+                            ForEach(awsVaultState.manager.getProfileNames(), id: \.self) { profileName in
+                                Text(profileName).tag(profileName)
+                            }
+                        }
+                        .pickerStyle(.menu)
+
+                        if awsVaultState.manager.getProfileNames().isEmpty {
+                            Text("No profiles found. Add profiles in AWS Vault Manager.")
+                                .font(.caption)
+                                .foregroundColor(.orange)
+                        }
+                    }
                 }
 
                 Section {

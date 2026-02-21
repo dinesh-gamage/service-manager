@@ -14,6 +14,8 @@ import UniformTypeIdentifiers
 class InstanceGroupManager: ObservableObject {
     @Published var groups: [InstanceGroup] = []
     @Published var isFetching: [UUID: Bool] = [:]
+    @Published var isRestarting: [UUID: Bool] = [:]
+    @Published var isCheckingHealth: [UUID: Bool] = [:]
     @Published var instanceOutputs: [UUID: CommandOutputViewModel] = [:]
     @Published var listRefreshTrigger = UUID()
     @Published private(set) var isLoading = false
@@ -129,6 +131,232 @@ class InstanceGroupManager: ObservableObject {
                     outputViewModel.setLogs(errorLog)
                     self.updateInstance(group.id, instanceId: instance.id, ip: nil, fetchedDate: Date(), error: "Process error: \(error.localizedDescription)")
                     self.isFetching[instance.id] = false
+                }
+            }
+        }
+    }
+
+    func restartInstance(group: InstanceGroup, instance: EC2Instance) {
+        // Clear previous error immediately
+        if let groupIndex = groups.firstIndex(where: { $0.id == group.id }),
+           let instanceIndex = groups[groupIndex].instances.firstIndex(where: { $0.id == instance.id }) {
+            groups[groupIndex].instances[instanceIndex].fetchError = nil
+            objectWillChange.send()
+        }
+
+        isRestarting[instance.id] = true
+
+        // Create or get output view model for this instance
+        let outputViewModel = instanceOutputs[instance.id] ?? CommandOutputViewModel()
+        if instanceOutputs[instance.id] == nil {
+            instanceOutputs[instance.id] = outputViewModel
+        }
+
+        Task.detached(priority: .userInitiated) {
+            let instanceId = instance.instanceId
+            let region = group.region
+            let profile = group.awsProfile
+
+            var fullLog = "[Restart initiated for \(instance.name)]\n\n"
+
+            // Step 1: Stop instance
+            let stopCommand = "aws-vault exec \(profile) -- aws ec2 stop-instances --instance-ids \(instanceId) --region \(region)"
+            fullLog += "[Command] \(stopCommand)\n"
+
+            let stopProcess = Process()
+            stopProcess.executableURL = URL(fileURLWithPath: "/bin/zsh")
+            stopProcess.arguments = ["-c", stopCommand]
+            stopProcess.environment = ProcessEnvironment.shared.getEnvironment()
+
+            let stopOutput = Pipe()
+            let stopError = Pipe()
+            stopProcess.standardOutput = stopOutput
+            stopProcess.standardError = stopError
+
+            do {
+                try stopProcess.run()
+                stopProcess.waitUntilExit()
+
+                let stopOutputData = stopOutput.fileHandleForReading.readDataToEndOfFile()
+                let stopErrorData = stopError.fileHandleForReading.readDataToEndOfFile()
+                let stopOut = String(data: stopOutputData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let stopErr = String(data: stopErrorData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+                if stopProcess.terminationStatus != 0 {
+                    fullLog += "[Stop Failed] Exit code: \(stopProcess.terminationStatus)\n"
+                    if !stopErr.isEmpty { fullLog += "\(stopErr)\n" }
+                    await MainActor.run {
+                        outputViewModel.setLogs(fullLog)
+                        self.updateInstance(group.id, instanceId: instance.id, ip: nil, fetchedDate: Date(), error: "Failed to stop instance")
+                        self.isRestarting[instance.id] = false
+                    }
+                    return
+                }
+
+                fullLog += "[Stop] Success\n"
+                if !stopOut.isEmpty { fullLog += "\(stopOut)\n" }
+                fullLog += "\n"
+
+                // Step 2: Wait for instance to stop
+                fullLog += "[Waiting] For instance to stop...\n"
+                await MainActor.run { outputViewModel.setLogs(fullLog) }
+
+                let waitStopCommand = "aws-vault exec \(profile) -- aws ec2 wait instance-stopped --instance-ids \(instanceId) --region \(region)"
+                let waitStopProcess = Process()
+                waitStopProcess.executableURL = URL(fileURLWithPath: "/bin/zsh")
+                waitStopProcess.arguments = ["-c", waitStopCommand]
+                waitStopProcess.environment = ProcessEnvironment.shared.getEnvironment()
+
+                try waitStopProcess.run()
+                waitStopProcess.waitUntilExit()
+
+                fullLog += "[Stopped] Instance is now stopped\n\n"
+
+                // Step 3: Start instance
+                let startCommand = "aws-vault exec \(profile) -- aws ec2 start-instances --instance-ids \(instanceId) --region \(region)"
+                fullLog += "[Command] \(startCommand)\n"
+                await MainActor.run { outputViewModel.setLogs(fullLog) }
+
+                let startProcess = Process()
+                startProcess.executableURL = URL(fileURLWithPath: "/bin/zsh")
+                startProcess.arguments = ["-c", startCommand]
+                startProcess.environment = ProcessEnvironment.shared.getEnvironment()
+
+                let startOutput = Pipe()
+                let startError = Pipe()
+                startProcess.standardOutput = startOutput
+                startProcess.standardError = startError
+
+                try startProcess.run()
+                startProcess.waitUntilExit()
+
+                let startOutputData = startOutput.fileHandleForReading.readDataToEndOfFile()
+                let startErrorData = startError.fileHandleForReading.readDataToEndOfFile()
+                let startOut = String(data: startOutputData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let startErr = String(data: startErrorData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+                if startProcess.terminationStatus != 0 {
+                    fullLog += "[Start Failed] Exit code: \(startProcess.terminationStatus)\n"
+                    if !startErr.isEmpty { fullLog += "\(startErr)\n" }
+                    await MainActor.run {
+                        outputViewModel.setLogs(fullLog)
+                        self.updateInstance(group.id, instanceId: instance.id, ip: nil, fetchedDate: Date(), error: "Failed to start instance")
+                        self.isRestarting[instance.id] = false
+                    }
+                    return
+                }
+
+                fullLog += "[Start] Success\n"
+                if !startOut.isEmpty { fullLog += "\(startOut)\n" }
+                fullLog += "\n"
+
+                // Step 4: Wait for instance to be running
+                fullLog += "[Waiting] For instance to be running...\n"
+                await MainActor.run { outputViewModel.setLogs(fullLog) }
+
+                let waitRunCommand = "aws-vault exec \(profile) -- aws ec2 wait instance-running --instance-ids \(instanceId) --region \(region)"
+                let waitRunProcess = Process()
+                waitRunProcess.executableURL = URL(fileURLWithPath: "/bin/zsh")
+                waitRunProcess.arguments = ["-c", waitRunCommand]
+                waitRunProcess.environment = ProcessEnvironment.shared.getEnvironment()
+
+                try waitRunProcess.run()
+                waitRunProcess.waitUntilExit()
+
+                fullLog += "[Running] Instance is now running\n\n"
+
+                // Step 5: Fetch new IP
+                fullLog += "[Fetching] New IP address...\n"
+                await MainActor.run { outputViewModel.setLogs(fullLog) }
+
+                let ipCommand = "aws-vault exec \(profile) -- aws ec2 describe-instances --instance-ids \(instanceId) --region \(region) --query 'Reservations[0].Instances[0].PublicIpAddress' --output text"
+                let ipProcess = Process()
+                ipProcess.executableURL = URL(fileURLWithPath: "/bin/zsh")
+                ipProcess.arguments = ["-c", ipCommand]
+                ipProcess.environment = ProcessEnvironment.shared.getEnvironment()
+
+                let ipOutput = Pipe()
+                ipProcess.standardOutput = ipOutput
+
+                try ipProcess.run()
+                ipProcess.waitUntilExit()
+
+                let ipData = ipOutput.fileHandleForReading.readDataToEndOfFile()
+                let newIP = String(data: ipData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+                fullLog += "[Success] Restart complete. New IP: \(newIP)\n"
+
+                await MainActor.run {
+                    outputViewModel.setLogs(fullLog)
+                    self.updateInstance(group.id, instanceId: instance.id, ip: newIP, fetchedDate: Date(), error: nil)
+                    self.isRestarting[instance.id] = false
+                    self.toastQueue?.enqueue(message: "'\(instance.name)' restarted successfully")
+                }
+            } catch {
+                fullLog += "\n[Error] \(error.localizedDescription)\n"
+                await MainActor.run {
+                    outputViewModel.setLogs(fullLog)
+                    self.updateInstance(group.id, instanceId: instance.id, ip: nil, fetchedDate: Date(), error: "Restart failed: \(error.localizedDescription)")
+                    self.isRestarting[instance.id] = false
+                }
+            }
+        }
+    }
+
+    func checkInstanceHealth(group: InstanceGroup, instance: EC2Instance) {
+        isCheckingHealth[instance.id] = true
+
+        // Create or get output view model for this instance
+        let outputViewModel = instanceOutputs[instance.id] ?? CommandOutputViewModel()
+        if instanceOutputs[instance.id] == nil {
+            instanceOutputs[instance.id] = outputViewModel
+        }
+
+        Task.detached(priority: .userInitiated) {
+            let command = "aws-vault exec \(group.awsProfile) -- aws ec2 describe-instance-status --instance-ids \(instance.instanceId) --region \(group.region) --include-all-instances"
+
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+            process.arguments = ["-c", command]
+            process.environment = ProcessEnvironment.shared.getEnvironment()
+
+            let outputPipe = Pipe()
+            let errorPipe = Pipe()
+            process.standardOutput = outputPipe
+            process.standardError = errorPipe
+
+            do {
+                try process.run()
+                process.waitUntilExit()
+
+                let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
+                let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+
+                let output = String(data: outputData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let errorOutput = String(data: errorData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+                let exitCode = process.terminationStatus
+
+                // Build full output log
+                var fullLog = "[Health Check] \(instance.name)\n"
+                fullLog += "[Command] \(command)\n\n"
+                fullLog += "[Exit Code] \(exitCode)\n\n"
+                if !output.isEmpty {
+                    fullLog += "[STDOUT]\n\(output)\n\n"
+                }
+                if !errorOutput.isEmpty {
+                    fullLog += "[STDERR]\n\(errorOutput)\n"
+                }
+
+                await MainActor.run {
+                    outputViewModel.setLogs(fullLog)
+                    self.isCheckingHealth[instance.id] = false
+                }
+            } catch {
+                let errorLog = "[Health Check] \(instance.name)\n[Command] \(command)\n\n[Error] \(error.localizedDescription)\n"
+                await MainActor.run {
+                    outputViewModel.setLogs(errorLog)
+                    self.isCheckingHealth[instance.id] = false
                 }
             }
         }

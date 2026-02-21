@@ -50,6 +50,9 @@ class EC2ManagerState: ObservableObject {
     @Published var instanceToEdit: EC2Instance?
     @Published var instanceToDelete: EC2Instance?
     @Published var showingDeleteInstanceConfirmation = false
+    @Published var instanceToRestart: EC2Instance?
+    @Published var showingRestartInstanceConfirmation = false
+    @Published var restartConfirmationText = ""
 
     private init() {
         self.manager = InstanceGroupManager(alertQueue: alertQueue, toastQueue: toastQueue)

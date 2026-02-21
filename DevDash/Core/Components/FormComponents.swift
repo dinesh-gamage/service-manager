@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import AppKit
 
 // MARK: - Environment Variable Model
 
@@ -50,8 +51,14 @@ struct ServiceFormContent: View {
                             .textFieldStyle(.roundedBorder)
                     }
                     FormField(label: "Working Directory") {
-                        TextField("/Users/me/project", text: $workingDirectory)
-                            .textFieldStyle(.roundedBorder)
+                        HStack(spacing: 8) {
+                            TextField("/Users/me/project", text: $workingDirectory)
+                                .textFieldStyle(.roundedBorder)
+                            Button("Browse...") {
+                                browseForDirectory()
+                            }
+                            .buttonStyle(.bordered)
+                        }
                     }
                 }
 
@@ -140,6 +147,22 @@ struct ServiceFormContent: View {
                 }
             }
             .padding(20)
+        }
+    }
+
+    private func browseForDirectory() {
+        let panel = NSOpenPanel()
+        panel.title = "Select Working Directory"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = true
+        panel.directoryURL = URL(fileURLWithPath: workingDirectory.isEmpty ? NSHomeDirectory() : workingDirectory)
+
+        panel.begin { response in
+            if response == .OK, let url = panel.url {
+                workingDirectory = url.path
+            }
         }
     }
 }
