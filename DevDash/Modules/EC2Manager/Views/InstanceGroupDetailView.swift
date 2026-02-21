@@ -170,9 +170,17 @@ struct InstanceGroupDetailView: View {
                                 showingOutput = true
                             }
                         }
+
+                        // SSH button (only if IP exists and SSH is configured)
+                        if instance.lastKnownIP != nil &&
+                           manager.resolveSSHConfig(instance: instance, group: group) != nil {
+                            VariantButton(icon: "command", variant: .primary, tooltip: "Open SSH Terminal") {
+                                manager.openSSHTerminal(instance: instance, group: group)
+                            }
+                        }
                     }
                 }
-                .width(min: 200, ideal: 200, max: 200)
+                .width(min: 250, ideal: 250, max: 250)
 
                 TableColumn("") { instance in
                     HStack(spacing: 6) {
@@ -192,6 +200,46 @@ struct InstanceGroupDetailView: View {
                 .width(min: 80, ideal: 80, max: 80)
                     }
                     .padding()
+
+                    // Tunnels Section
+                    if group.instances.contains(where: { !$0.tunnels.isEmpty }) {
+                        Divider()
+                            .padding(.horizontal)
+
+                        VStack(alignment: .leading, spacing: 16) {
+                            Text("SSH Tunnels")
+                                .font(.headline)
+                                .padding(.horizontal)
+
+                            ForEach(group.instances.filter { !$0.tunnels.isEmpty }) { instance in
+                                VStack(alignment: .leading, spacing: 8) {
+                                    // Instance header
+                                    HStack {
+                                        Image(systemName: "server.rack")
+                                            .foregroundColor(.secondary)
+                                        Text(instance.name)
+                                            .font(.subheadline)
+                                            .fontWeight(.medium)
+                                        Spacer()
+                                    }
+                                    .padding(.horizontal)
+
+                                    // Tunnels for this instance
+                                    ForEach(instance.tunnels) { tunnel in
+                                        TunnelRow(
+                                            tunnel: tunnel,
+                                            instance: instance,
+                                            group: group,
+                                            manager: manager
+                                        )
+                                        .padding(.horizontal)
+                                    }
+                                }
+                                .padding(.vertical, 8)
+                            }
+                        }
+                        .padding(.vertical)
+                    }
                 }
             }
             .sheet(isPresented: $state.showingAddInstance) {

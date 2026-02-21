@@ -28,6 +28,9 @@ class InstanceGroupManager: ObservableObject {
     private var restartTasks: [UUID: Task<Void, Never>] = [:]
     private var healthCheckTasks: [UUID: Task<Void, Never>] = [:]
 
+    // Tunnel management
+    private var tunnelRuntimes: [UUID: TunnelRuntime] = [:]
+
     init(alertQueue: AlertQueue? = nil, toastQueue: ToastQueue? = nil) {
         self.alertQueue = alertQueue
         self.toastQueue = toastQueue
@@ -578,6 +581,139 @@ class InstanceGroupManager: ObservableObject {
                 }
                 self.alertQueue?.enqueue(title: "Import Failed", message: error.localizedDescription)
             }
+        }
+    }
+
+    // MARK: - Tunnel Management
+
+    /// Get tunnel runtime for a specific tunnel ID
+    func getTunnelRuntime(tunnelId: UUID) -> TunnelRuntime? {
+        return tunnelRuntimes[tunnelId]
+    }
+
+    /// Resolve SSH config for an instance (instance config takes precedence over group)
+    func resolveSSHConfig(instance: EC2Instance, group: InstanceGroup) -> SSHConfig? {
+        return instance.sshConfig ?? group.sshConfig
+    }
+
+    /// Start an SSH tunnel for an instance
+    func startTunnel(instance: EC2Instance, tunnel: SSHTunnel, group: InstanceGroup) {
+        // Validate bastion IP exists
+        guard let bastionIP = instance.lastKnownIP else {
+            alertQueue?.enqueue(title: "No IP Available", message: "Fetch the instance IP first before starting a tunnel.")
+            return
+        }
+
+        // Resolve SSH config
+        guard let sshConfig = resolveSSHConfig(instance: instance, group: group) else {
+            alertQueue?.enqueue(title: "SSH Not Configured", message: "Configure SSH settings in the group or instance first.")
+            return
+        }
+
+        // Validate SSH key file exists
+        let expandedKeyPath = NSString(string: sshConfig.keyPath).expandingTildeInPath
+        guard FileManager.default.fileExists(atPath: expandedKeyPath) else {
+            alertQueue?.enqueue(title: "SSH Key Not Found", message: "Key file does not exist: \(expandedKeyPath)")
+            return
+        }
+
+        // Check if port is already in use
+        if isPortInUse(tunnel.localPort) {
+            alertQueue?.enqueue(title: "Port Conflict", message: "Port \(tunnel.localPort) is already in use by another process.")
+            return
+        }
+
+        // Check if tunnel is already running
+        if let existingRuntime = tunnelRuntimes[tunnel.id], existingRuntime.isConnected {
+            toastQueue?.enqueue(message: "Tunnel '\(tunnel.name)' is already running")
+            return
+        }
+
+        // Create and start tunnel runtime
+        let runtime = TunnelRuntime(tunnel: tunnel, bastionIP: bastionIP, sshConfig: sshConfig)
+        tunnelRuntimes[tunnel.id] = runtime
+        runtime.start()
+
+        toastQueue?.enqueue(message: "Tunnel '\(tunnel.name)' started")
+    }
+
+    /// Stop an SSH tunnel
+    func stopTunnel(tunnelId: UUID) {
+        guard let runtime = tunnelRuntimes[tunnelId] else { return }
+
+        runtime.stop()
+        toastQueue?.enqueue(message: "Tunnel '\(runtime.tunnel.name)' stopped")
+    }
+
+    /// Stop all tunnels for an instance
+    func stopAllTunnelsForInstance(instanceId: UUID) {
+        // Find all tunnels for this instance
+        for group in groups {
+            if let instance = group.instances.first(where: { $0.id == instanceId }) {
+                for tunnel in instance.tunnels {
+                    if let runtime = tunnelRuntimes[tunnel.id], runtime.isConnected {
+                        runtime.stop()
+                    }
+                }
+            }
+        }
+    }
+
+    /// Check if a local port is in use
+    private func isPortInUse(_ port: Int) -> Bool {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
+        process.arguments = ["-i", ":\(port)"]
+
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let output = String(data: data, encoding: .utf8) ?? ""
+
+            // lsof returns non-empty output if port is in use
+            return !output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && process.terminationStatus == 0
+        } catch {
+            return false
+        }
+    }
+
+    /// Open SSH terminal session for an instance
+    func openSSHTerminal(instance: EC2Instance, group: InstanceGroup) {
+        // Validate IP exists
+        guard let bastionIP = instance.lastKnownIP else {
+            alertQueue?.enqueue(title: "No IP Available", message: "Fetch the instance IP first.")
+            return
+        }
+
+        // Resolve SSH config
+        guard let sshConfig = resolveSSHConfig(instance: instance, group: group) else {
+            alertQueue?.enqueue(title: "SSH Not Configured", message: "Configure SSH settings in the group or instance first.")
+            return
+        }
+
+        // Validate key file
+        let expandedKeyPath = NSString(string: sshConfig.keyPath).expandingTildeInPath
+        guard FileManager.default.fileExists(atPath: expandedKeyPath) else {
+            alertQueue?.enqueue(title: "SSH Key Not Found", message: "Key file does not exist: \(expandedKeyPath)")
+            return
+        }
+
+        // Open terminal
+        do {
+            try TerminalLauncher.openSSH(
+                host: bastionIP,
+                username: sshConfig.username,
+                keyPath: sshConfig.keyPath,
+                customOptions: sshConfig.customOptions
+            )
+        } catch {
+            alertQueue?.enqueue(title: "Failed to Open Terminal", message: error.localizedDescription)
         }
     }
 }

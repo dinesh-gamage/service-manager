@@ -16,6 +16,7 @@ struct EditInstanceGroupView: View {
     @State private var name: String
     @State private var region: String
     @State private var awsProfile: String
+    @State private var sshConfig: SSHConfig?
 
     init(manager: InstanceGroupManager, group: InstanceGroup) {
         self.manager = manager
@@ -23,6 +24,7 @@ struct EditInstanceGroupView: View {
         _name = State(initialValue: group.name)
         _region = State(initialValue: group.region)
         _awsProfile = State(initialValue: group.awsProfile)
+        _sshConfig = State(initialValue: group.sshConfig)
     }
 
     var body: some View {
@@ -52,6 +54,14 @@ struct EditInstanceGroupView: View {
                     }
                 }
 
+                Section("SSH Configuration") {
+                    SSHConfigForm(config: $sshConfig)
+
+                    Text("This SSH configuration will be inherited by all instances in this group unless overridden.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+
                 Section {
                     Text("Group contains \(group.instances.count) instance(s).")
                         .font(.caption)
@@ -79,7 +89,8 @@ struct EditInstanceGroupView: View {
             name: name,
             region: region,
             awsProfile: awsProfile,
-            instances: group.instances
+            instances: group.instances,
+            sshConfig: sshConfig
         )
         manager.updateGroup(groupId: group.id, newGroup: updatedGroup)
         dismiss()
