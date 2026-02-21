@@ -191,42 +191,54 @@ struct ModuleListItem: View {
 struct DashboardView: View {
     let onSelectModule: (String) -> Void
     @ObservedObject var registry = ModuleRegistry.shared
+    @ObservedObject var serviceState = ServiceManagerState.shared
+    @ObservedObject var ec2State = EC2ManagerState.shared
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 24) {
-                // Welcome header
-                VStack(spacing: 8) {
+            VStack(spacing: 20) {
+                // Compact header
+                HStack(spacing: 12) {
                     Image(systemName: "square.grid.2x2.fill")
-                        .font(.system(size: 64))
+                        .font(.title2)
                         .foregroundStyle(.linearGradient(
                             colors: [.blue, .purple],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         ))
 
-                    Text("Welcome to DevDash")
-                        .font(.largeTitle)
-                        .fontWeight(.bold)
-
-                    Text("Select a module to get started")
+                    Text("Welcome back, \(NSFullUserName())")
                         .font(.title3)
                         .foregroundColor(.secondary)
-                }
-                .padding(.top, 40)
 
-                // Module cards
-                LazyVGrid(columns: [
-                    GridItem(.adaptive(minimum: 280, maximum: 400), spacing: 20)
-                ], spacing: 20) {
-                    ForEach(registry.modules, id: \.id) { module in
-                        ModuleCard(module: module, onTap: {
-                            onSelectModule(module.id)
-                        })
-                    }
+                    Spacer()
                 }
-                .padding(.horizontal, 40)
-                .padding(.bottom, 40)
+                .padding(.horizontal, 20)
+                .padding(.top, 20)
+
+                // Count Widgets
+                HStack(spacing: 12) {
+                    ServiceCountWidget()
+                    EC2CountWidget()
+                    CredentialsCountWidget()
+                    AWSVaultCountWidget()
+                }
+                .padding(.horizontal, 20)
+
+                // List Widgets
+                HStack(alignment: .top, spacing: 20) {
+                    // Service Manager Widget
+                    ServiceDashboardWidget(
+                        onModuleTap: { onSelectModule("service-manager") }
+                    )
+
+                    // EC2 Manager Widget
+                    EC2DashboardWidget(
+                        onModuleTap: { onSelectModule("ec2-manager") }
+                    )
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 20)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
