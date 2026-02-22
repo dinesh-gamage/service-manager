@@ -11,14 +11,29 @@ struct AddTunnelView: View {
     @Environment(\.dismiss) var dismiss
     @ObservedObject var manager: InstanceGroupManager
     let group: InstanceGroup
-    let instance: EC2Instance
 
-    @State private var tunnel = SSHTunnel(name: "", localPort: 10000, remoteHost: "", remotePort: 27017)
+    // Initialize with a placeholder UUID that will be replaced
+    @State private var tunnel: SSHTunnel
     @State private var isValid = false
+
+    init(manager: InstanceGroupManager, group: InstanceGroup) {
+        self.manager = manager
+        self.group = group
+
+        // Initialize with first instance if available, otherwise use placeholder
+        let firstInstanceId = group.instances.first?.id ?? UUID()
+        _tunnel = State(initialValue: SSHTunnel(
+            name: "",
+            localPort: 10000,
+            remoteHost: "",
+            remotePort: 27017,
+            bastionInstanceId: firstInstanceId
+        ))
+    }
 
     var body: some View {
         NavigationStack {
-            TunnelForm(tunnel: $tunnel, isValid: $isValid)
+            TunnelForm(tunnel: $tunnel, isValid: $isValid, instances: group.instances)
                 .navigationTitle("Add Tunnel")
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
@@ -30,20 +45,11 @@ struct AddTunnelView: View {
                     }
                 }
         }
-        .frame(minWidth: 500, minHeight: 400)
+        .frame(minWidth: 500, minHeight: 450)
     }
 
     private func addTunnel() {
-        // Find group and instance indices
-        guard let groupIndex = manager.groups.firstIndex(where: { $0.id == group.id }),
-              let instanceIndex = manager.groups[groupIndex].instances.firstIndex(where: { $0.id == instance.id }) else {
-            return
-        }
-
-        // Add tunnel to instance
-        manager.groups[groupIndex].instances[instanceIndex].tunnels.append(tunnel)
-        manager.saveGroups()
-
+        manager.addTunnel(groupId: group.id, tunnel: tunnel)
         dismiss()
     }
 }

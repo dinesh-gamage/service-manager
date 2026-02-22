@@ -17,6 +17,7 @@ struct ContentView: View {
     @ObservedObject var ec2ToastQueue = EC2ManagerState.shared.toastQueue
     @ObservedObject var credentialsToastQueue = CredentialsManagerState.shared.toastQueue
     @ObservedObject var awsVaultToastQueue = AWSVaultManagerState.shared.toastQueue
+    @ObservedObject var settingsToastQueue = SettingsState.shared.toastQueue
 
     var selectedModule: (any DevDashModule)? {
         guard let id = selectedModuleId else { return nil }
@@ -99,42 +100,44 @@ struct ContentView: View {
                         // Settings button at bottom
                         Divider()
 
-                        HStack(spacing: 12) {
-                            Image(systemName: "gearshape.fill")
-                                .font(.title3)
-                                .foregroundColor(.blue)
-                                .frame(width: 32, height: 32)
-                                .background(Color.blue.opacity(selectedModuleId == "settings" ? 0.2 : 0.1))
-                                .cornerRadius(8)
+                        if let settingsModule = registry.getModule(byId: "settings") {
+                            HStack(spacing: 12) {
+                                Image(systemName: settingsModule.icon)
+                                    .font(.title3)
+                                    .foregroundColor(settingsModule.accentColor)
+                                    .frame(width: 32, height: 32)
+                                    .background(settingsModule.accentColor.opacity(selectedModuleId == "settings" ? 0.2 : 0.1))
+                                    .cornerRadius(8)
 
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Settings")
-                                    .font(.body)
-                                    .fontWeight(.medium)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(settingsModule.name)
+                                        .font(.body)
+                                        .fontWeight(.medium)
 
-                                Text("Backup and configuration")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                    .lineLimit(1)
+                                    Text(settingsModule.description)
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                        .lineLimit(1)
+                                }
+
+                                Spacer()
                             }
-
-                            Spacer()
-                        }
-                        .padding(.vertical, 6)
-                        .padding(.horizontal, 8)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(selectedModuleId == "settings" ? Color.purple.opacity(0.08) : AppTheme.clearColor)
-                        )
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            withAnimation {
-                                selectedModuleId = "settings"
-                                showingModuleList = false
+                            .padding(.vertical, 6)
+                            .padding(.horizontal, 8)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(selectedModuleId == "settings" ? settingsModule.accentColor.opacity(0.08) : AppTheme.clearColor)
+                            )
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                withAnimation {
+                                    selectedModuleId = "settings"
+                                    showingModuleList = false
+                                }
                             }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
                         }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 8)
                     }
                 } else if let module = selectedModule {
                     // Module name section
@@ -184,6 +187,7 @@ struct ContentView: View {
         .toastQueue(ec2ToastQueue)
         .toastQueue(credentialsToastQueue)
         .toastQueue(awsVaultToastQueue)
+        .toastQueue(settingsToastQueue)
     }
 }
 

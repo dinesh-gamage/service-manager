@@ -45,30 +45,36 @@ class KeychainManager {
     // MARK: - Save
 
     /// Save a string value to keychain
-    func save(_ value: String, for key: String) throws {
+    func save(_ value: String, for key: String, context: LAContext? = nil) throws {
         guard let data = value.data(using: .utf8) else {
             throw KeychainError.unableToEncode
         }
 
-        try save(data, for: key)
+        try save(data, for: key, context: context)
     }
 
     /// Save data to keychain
-    func save(_ data: Data, for key: String) throws {
-        let query: [String: Any] = [
+    func save(_ data: Data, for key: String, context: LAContext? = nil) throws {
+        var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: key,
             kSecValueData as String: data,
-            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         ]
+
+        // Pass LAContext if available for authenticated operations
+        // This allows biometric-authenticated sessions to access keychain without prompts
+        if let context = context {
+            query[kSecUseAuthenticationContext as String] = context
+        }
 
         // Try to add the item
         let status = SecItemAdd(query as CFDictionary, nil)
 
         if status == errSecDuplicateItem {
             // Item exists, update it
-            try update(data, for: key)
+            try update(data, for: key, context: context)
         } else if status != errSecSuccess {
             throw KeychainError.unexpectedStatus(status)
         }
@@ -77,8 +83,8 @@ class KeychainManager {
     // MARK: - Retrieve
 
     /// Retrieve a string value from keychain
-    func retrieve(_ key: String) throws -> String {
-        let data = try retrieveData(key)
+    func retrieve(_ key: String, context: LAContext? = nil) throws -> String {
+        let data = try retrieveData(key, context: context)
 
         guard let value = String(data: data, encoding: .utf8) else {
             throw KeychainError.unableToDecode
@@ -88,19 +94,20 @@ class KeychainManager {
     }
 
     /// Retrieve data from keychain
-    func retrieveData(_ key: String) throws -> Data {
-        // Create LAContext with interaction disabled to prevent auth prompts
-        let context = LAContext()
-        context.interactionNotAllowed = true
-
-        let query: [String: Any] = [
+    func retrieveData(_ key: String, context: LAContext? = nil) throws -> Data {
+        var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: key,
             kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-            kSecUseAuthenticationContext as String: context
+            kSecMatchLimit as String: kSecMatchLimitOne
         ]
+
+        // Pass authenticated context to prevent password prompts
+        // This tells Security framework to use the already-authenticated session
+        if let context = context {
+            query[kSecUseAuthenticationContext as String] = context
+        }
 
         var result: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
@@ -122,17 +129,22 @@ class KeychainManager {
     // MARK: - Update
 
     /// Update an existing keychain item
-    private func update(_ data: Data, for key: String) throws {
+    private func update(_ data: Data, for key: String, context: LAContext? = nil) throws {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: key
         ]
 
-        let attributes: [String: Any] = [
+        var attributes: [String: Any] = [
             kSecValueData as String: data,
-            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         ]
+
+        // Pass LAContext if available for authenticated operations
+        if let context = context {
+            attributes[kSecUseAuthenticationContext as String] = context
+        }
 
         let status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
 

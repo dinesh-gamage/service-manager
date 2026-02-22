@@ -7,6 +7,7 @@
 
 import Foundation
 import Combine
+import LocalAuthentication
 
 enum BackupError: Error, LocalizedError {
     case configNotSet
@@ -67,10 +68,16 @@ class BackupManager: ObservableObject {
 
     private let fileEncryption = FileEncryption.shared
     private let processEnvironment = ProcessEnvironment.shared
+    private let authManager = BiometricAuthManager.shared
 
     private init() {
         loadConfig()
         loadStatus()
+    }
+
+    /// Get the authenticated context for keychain operations
+    private var authContext: LAContext? {
+        authManager.getAuthenticatedContext()
     }
 
     // MARK: - Config Management
@@ -170,10 +177,10 @@ class BackupManager: ObservableObject {
                 moduleProgressMap[moduleName] = encryptProgress
                 try await Task.sleep(nanoseconds: 300_000_000)  // 300ms delay for visibility
 
-                // Encrypt data
+                // Encrypt data with authenticated context
                 let encryptedData: Data
                 do {
-                    encryptedData = try fileEncryption.encrypt(jsonData)
+                    encryptedData = try fileEncryption.encrypt(jsonData, context: authContext)
                 } catch {
                     throw BackupError.encryptionFailed(error)
                 }
@@ -333,9 +340,9 @@ class BackupManager: ObservableObject {
         // Read encrypted data
         let encryptedData = try Data(contentsOf: tempFile)
 
-        // Decrypt
+        // Decrypt with authenticated context
         do {
-            return try fileEncryption.decrypt(encryptedData)
+            return try fileEncryption.decrypt(encryptedData, context: authContext)
         } catch {
             throw BackupError.decryptionFailed(error)
         }

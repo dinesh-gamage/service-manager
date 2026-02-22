@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import SwiftUI
 
 /// Manages process environment variables, particularly resolving the user's actual shell PATH
 /// macOS GUI apps don't inherit the user's shell PATH from .zshrc/.zprofile
@@ -76,5 +77,34 @@ class ProcessEnvironment {
         }
 
         return env
+    }
+
+    /// Get environment dictionary with AWS vault credentials for a specific profile
+    /// This method retrieves cached session credentials from aws-vault
+    /// Prompts for keychain password only once per app session
+    /// - Parameters:
+    ///   - profile: AWS profile name to use for credentials
+    ///   - region: AWS region (optional)
+    /// - Returns: Environment dictionary with AWS credentials, or base environment if session fetch fails
+    @MainActor
+    func getEnvironment(withAWSProfile profile: String, region: String? = nil) async -> [String: String] {
+        // Get session credentials from vault manager
+        if let session = await AWSVaultServerManager.shared.getSession(for: profile, region: region) {
+            var awsEnv: [String: String] = [
+                "AWS_ACCESS_KEY_ID": session.accessKeyId,
+                "AWS_SECRET_ACCESS_KEY": session.secretAccessKey,
+                "AWS_SESSION_TOKEN": session.sessionToken
+            ]
+
+            if let region = session.region {
+                awsEnv["AWS_REGION"] = region
+                awsEnv["AWS_DEFAULT_REGION"] = region
+            }
+
+            return getEnvironment(additionalVars: awsEnv)
+        }
+
+        // Fallback to base environment if session fetch failed
+        return getEnvironment()
     }
 }

@@ -32,57 +32,61 @@ struct CredentialsManagerModule: DevDashModule {
     func exportForBackup() async throws -> Data {
         let manager = CredentialsManagerState.shared.manager
         let keychainManager = KeychainManager.shared
+        let authManager = BiometricAuthManager.shared
+        let authContext = authManager.getAuthenticatedContext()
 
-        // Export with all secrets from Keychain
-        let exportData = try manager.credentials.map { credential -> [String: Any] in
-            var data: [String: Any] = [
-                "id": credential.id.uuidString,
-                "title": credential.title,
-                "category": credential.category,
-                "username": credential.username as Any,
-                "notes": credential.notes as Any,
-                "url": credential.url as Any,
-                "createdAt": credential.createdAt.timeIntervalSince1970,
-                "lastModified": credential.lastModified.timeIntervalSince1970
-            ]
+        // Export with all secrets from Keychain using Codable format
+        let exportData = try manager.credentials.map { credential -> ImportCredential in
+            // Retrieve password from Keychain
+            let password = try? keychainManager.retrieve(credential.passwordKeychainKey, context: authContext)
 
-            // Include password from Keychain
-            if let password: String = try? keychainManager.retrieve(credential.passwordKeychainKey) {
-                data["password"] = password
+            // Retrieve access token if exists
+            var accessToken: String?
+            if let accessTokenKey = credential.accessTokenKeychainKey {
+                accessToken = try? keychainManager.retrieve(accessTokenKey, context: authContext)
             }
 
-            // Include access token if exists
-            if let accessTokenKey = credential.accessTokenKeychainKey,
-               let accessToken: String = try? keychainManager.retrieve(accessTokenKey) {
-                data["accessToken"] = accessToken
-            }
-
-            // Include recovery codes if exists
-            if let recoveryCodesKey = credential.recoveryCodesKeychainKey,
-               let recoveryCodes: String = try? keychainManager.retrieve(recoveryCodesKey) {
-                data["recoveryCodes"] = recoveryCodes
+            // Retrieve recovery codes if exists
+            var recoveryCodes: String?
+            if let recoveryCodesKey = credential.recoveryCodesKeychainKey {
+                recoveryCodes = try? keychainManager.retrieve(recoveryCodesKey, context: authContext)
             }
 
             // Include all fields (including secret ones from Keychain)
-            data["additionalFields"] = try credential.additionalFields.map { field -> [String: Any] in
-                var fieldData: [String: Any] = ["key": field.key, "isSecret": field.isSecret]
+            let fields = try credential.additionalFields.map { field -> ImportCredentialField in
+                let value: String
                 if field.isSecret {
                     // Retrieve secret value from Keychain
-                    if let secretValue: String = try? keychainManager.retrieve(field.keychainKey) {
-                        fieldData["value"] = secretValue
-                    } else {
-                        fieldData["value"] = ""
-                    }
+                    value = (try? keychainManager.retrieve(field.keychainKey, context: authContext)) ?? ""
                 } else {
-                    fieldData["value"] = field.value
+                    value = field.value
                 }
-                return fieldData
+                return ImportCredentialField(
+                    key: field.key,
+                    value: value,
+                    isSecret: field.isSecret
+                )
             }
 
-            return data
+            return ImportCredential(
+                id: credential.id.uuidString,
+                title: credential.title,
+                category: credential.category,
+                username: credential.username,
+                url: credential.url,
+                password: password,
+                accessToken: accessToken,
+                recoveryCodes: recoveryCodes,
+                additionalFields: fields.isEmpty ? nil : fields,
+                notes: credential.notes,
+                createdAt: credential.createdAt.timeIntervalSince1970,
+                lastModified: credential.lastModified.timeIntervalSince1970
+            )
         }
 
-        let jsonData = try JSONSerialization.data(withJSONObject: exportData, options: [.prettyPrinted, .sortedKeys])
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let jsonData = try encoder.encode(exportData)
         return jsonData
     }
 }
@@ -110,12 +114,6 @@ class CredentialsManagerState: ObservableObject {
     @Published var searchText = ""
     @Published var selectedCategory: String? = nil
 
-    // Revealed passwords (cached after authentication)
-    @Published var revealedPasswords: [UUID: String] = [:]
-    @Published var revealedAccessTokens: [UUID: String] = [:]
-    @Published var revealedRecoveryCodes: [UUID: String] = [:]
-    @Published var revealedFields: [UUID: String] = [:]
-
     private var cancellables = Set<AnyCancellable>()
 
     private init() {
@@ -128,102 +126,13 @@ class CredentialsManagerState: ObservableObject {
         .store(in: &cancellables)
     }
 
-    // MARK: - Authentication & Reveal
+    // MARK: - Clipboard Operations
 
-    func revealPassword(for credential: Credential) async {
-        do {
-            // Check authentication
-            try await authManager.verifyAuthentication(reason: "Authenticate to view password")
-
-            // Retrieve password
-            let password = try manager.getPassword(for: credential)
-            revealedPasswords[credential.id] = password
-        } catch {
-            alertQueue.enqueue(title: "Authentication Failed", message: error.localizedDescription)
-        }
-    }
-
-    func revealAccessToken(for credential: Credential) async {
-        do {
-            // Check authentication
-            try await authManager.verifyAuthentication(reason: "Authenticate to view access token")
-
-            // Retrieve access token
-            if let accessToken = try manager.getAccessToken(for: credential) {
-                revealedAccessTokens[credential.id] = accessToken
-            }
-        } catch {
-            alertQueue.enqueue(title: "Authentication Failed", message: error.localizedDescription)
-        }
-    }
-
-    func revealRecoveryCodes(for credential: Credential) async {
-        do {
-            // Check authentication
-            try await authManager.verifyAuthentication(reason: "Authenticate to view recovery codes")
-
-            // Retrieve recovery codes
-            if let recoveryCodes = try manager.getRecoveryCodes(for: credential) {
-                revealedRecoveryCodes[credential.id] = recoveryCodes
-            }
-        } catch {
-            alertQueue.enqueue(title: "Authentication Failed", message: error.localizedDescription)
-        }
-    }
-
-    func revealField(_ field: CredentialField) async {
-        guard field.isSecret else { return }
-
-        do {
-            // Check authentication
-            try await authManager.verifyAuthentication(reason: "Authenticate to view secret field")
-
-            // Retrieve field value
-            let value = try manager.getFieldValue(for: field)
-            revealedFields[field.id] = value
-        } catch {
-            alertQueue.enqueue(title: "Authentication Failed", message: error.localizedDescription)
-        }
-    }
-
-    func copyToClipboard(_ text: String, fieldName: String) async {
-        do {
-            // Check authentication for copy operation
-            try await authManager.verifyAuthentication(reason: "Authenticate to copy \(fieldName)")
-
-            // Copy to clipboard
-            let pasteboard = NSPasteboard.general
-            pasteboard.clearContents()
-            pasteboard.setString(text, forType: .string)
-
-            toastQueue.enqueue(message: "\(fieldName) copied to clipboard")
-        } catch {
-            alertQueue.enqueue(title: "Authentication Failed", message: error.localizedDescription)
-        }
-    }
-
-    func hidePassword(for credential: Credential) {
-        revealedPasswords.removeValue(forKey: credential.id)
-    }
-
-    func hideAccessToken(for credential: Credential) {
-        revealedAccessTokens.removeValue(forKey: credential.id)
-    }
-
-    func hideRecoveryCodes(for credential: Credential) {
-        revealedRecoveryCodes.removeValue(forKey: credential.id)
-    }
-
-    func hideField(_ field: CredentialField) {
-        revealedFields.removeValue(forKey: field.id)
-    }
-
-    // Clear all revealed data when session invalidates
-    func clearRevealedData() {
-        revealedPasswords.removeAll()
-        revealedAccessTokens.removeAll()
-        revealedRecoveryCodes.removeAll()
-        revealedFields.removeAll()
+    func copyToClipboard(_ text: String, fieldName: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+        toastQueue.enqueue(message: "\(fieldName) copied to clipboard")
     }
 
     var filteredCredentials: [Credential] {

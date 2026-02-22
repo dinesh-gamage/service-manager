@@ -21,6 +21,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 @main
 struct DevDashApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    @StateObject private var authManager = BiometricAuthManager.shared
 
     init() {
         // Register all modules
@@ -29,7 +30,14 @@ struct DevDashApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            ZStack {
+                ContentView()
+
+                // Authentication gate overlay
+                if !authManager.isAuthenticated {
+                    AuthenticationGateView()
+                }
+            }
         }
         .windowStyle(.hiddenTitleBar)
         .windowToolbarStyle(.unified)

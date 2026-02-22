@@ -8,6 +8,7 @@
 import Foundation
 import CryptoKit
 import CommonCrypto
+import LocalAuthentication
 
 enum FileEncryptionError: Error, LocalizedError {
     case passphraseNotSet
@@ -91,7 +92,7 @@ class FileEncryption {
     // MARK: - Passphrase Management
 
     /// Save passphrase to Keychain
-    func savePassphrase(_ passphrase: String) throws {
+    func savePassphrase(_ passphrase: String, context: LAContext? = nil) throws {
         guard passphrase.count >= 8 else {
             throw FileEncryptionError.weakPassphrase
         }
@@ -99,14 +100,14 @@ class FileEncryption {
         // Delete existing passphrase if any
         try? keychainManager.delete(passphraseKey)
 
-        // Save new passphrase using KeychainManager
-        try keychainManager.save(passphrase, for: passphraseKey)
+        // Save new passphrase using KeychainManager with authenticated context
+        try keychainManager.save(passphrase, for: passphraseKey, context: context)
     }
 
     /// Load passphrase from Keychain
-    private func loadPassphrase() throws -> String {
+    private func loadPassphrase(context: LAContext? = nil) throws -> String {
         do {
-            return try keychainManager.retrieve(passphraseKey)
+            return try keychainManager.retrieve(passphraseKey, context: context)
         } catch KeychainError.itemNotFound {
             throw FileEncryptionError.passphraseNotSet
         } catch {
@@ -127,17 +128,20 @@ class FileEncryption {
     }
 
     /// Check if passphrase is set
+    /// Uses exists() to avoid retrieving data, preventing keychain password prompts
     func hasPassphrase() -> Bool {
-        return (try? loadPassphrase()) != nil
+        return keychainManager.exists(passphraseKey)
     }
 
     // MARK: - Encryption/Decryption
 
     /// Encrypt data using AES-256-GCM with passphrase
-    /// - Parameter data: Plain data to encrypt
+    /// - Parameters:
+    ///   - data: Plain data to encrypt
+    ///   - context: Authenticated LAContext to prevent keychain password prompts
     /// - Returns: Encrypted data (16 bytes salt + encrypted content with nonce/tag)
-    func encrypt(_ data: Data) throws -> Data {
-        let passphrase = try loadPassphrase()
+    func encrypt(_ data: Data, context: LAContext? = nil) throws -> Data {
+        let passphrase = try loadPassphrase(context: context)
 
         // Generate random salt
         var salt = Data(count: 16)
@@ -160,10 +164,12 @@ class FileEncryption {
     }
 
     /// Decrypt data using AES-256-GCM with passphrase
-    /// - Parameter encryptedData: Encrypted data (salt + encrypted content)
+    /// - Parameters:
+    ///   - encryptedData: Encrypted data (salt + encrypted content)
+    ///   - context: Authenticated LAContext to prevent keychain password prompts
     /// - Returns: Decrypted plain data
-    func decrypt(_ encryptedData: Data) throws -> Data {
-        let passphrase = try loadPassphrase()
+    func decrypt(_ encryptedData: Data, context: LAContext? = nil) throws -> Data {
+        let passphrase = try loadPassphrase(context: context)
 
         // Extract salt (first 16 bytes)
         guard encryptedData.count > 16 else {
@@ -191,17 +197,17 @@ class FileEncryption {
     // MARK: - Convenience Methods
 
     /// Encrypt JSON-encodable object
-    func encryptJSON<T: Encodable>(_ object: T) throws -> Data {
+    func encryptJSON<T: Encodable>(_ object: T, context: LAContext? = nil) throws -> Data {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
 
         let jsonData = try encoder.encode(object)
-        return try encrypt(jsonData)
+        return try encrypt(jsonData, context: context)
     }
 
     /// Decrypt to JSON-decodable object
-    func decryptJSON<T: Decodable>(_ encryptedData: Data, as type: T.Type) throws -> T {
-        let decryptedData = try decrypt(encryptedData)
+    func decryptJSON<T: Decodable>(_ encryptedData: Data, as type: T.Type, context: LAContext? = nil) throws -> T {
+        let decryptedData = try decrypt(encryptedData, context: context)
         let decoder = JSONDecoder()
         return try decoder.decode(type, from: decryptedData)
     }

@@ -11,6 +11,8 @@ struct BackupDetailView: View {
     @ObservedObject private var backupManager = BackupManager.shared
     @ObservedObject private var moduleRegistry = ModuleRegistry.shared
     @ObservedObject private var accentColor = AppTheme.AccentColor.shared
+    @ObservedObject private var authManager = BiometricAuthManager.shared
+    @ObservedObject private var toastQueue = SettingsState.shared.toastQueue
     @State private var isConfigUnlocked = false
     @State private var showingPassphrasePrompt = false
     @State private var passphrase = ""
@@ -27,7 +29,6 @@ struct BackupDetailView: View {
 
     // Save feedback
     @State private var saveError: String?
-    @State private var showingSaveSuccess = false
 
 
     private let dateFormatter: DateFormatter = {
@@ -87,7 +88,7 @@ struct BackupDetailView: View {
             // Left: Cloud icon
             Image(systemName: lastBackupWasSuccessful ? "icloud.and.arrow.up.fill" : "icloud.and.arrow.up")
                 .font(.system(size: 56))
-                .foregroundColor(lastBackupWasSuccessful ? .blue : accentColor.current)
+                .foregroundColor(accentColor.current)
                 .frame(width: 80)
 
             Divider()
@@ -261,7 +262,7 @@ struct BackupDetailView: View {
                     // Left: Icon
                     Image(systemName: "checkmark.shield.fill")
                         .font(.system(size: 56))
-                        .foregroundColor(.blue)
+                        .foregroundColor(accentColor.current)
                         .frame(width: 80)
 
                     Divider()
@@ -436,7 +437,7 @@ struct BackupDetailView: View {
                 }
             }
 
-            // Save feedback messages
+            // Save feedback messages (errors only - success uses toast)
             if let error = saveError {
                 HStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle.fill")
@@ -448,20 +449,6 @@ struct BackupDetailView: View {
                 .padding(12)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(Color.red.opacity(0.1))
-                .cornerRadius(8)
-            }
-
-            if showingSaveSuccess {
-                HStack(spacing: 8) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundColor(.green)
-                    Text("Configuration saved successfully")
-                        .font(.callout)
-                        .foregroundColor(.green)
-                }
-                .padding(12)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.green.opacity(0.1))
                 .cornerRadius(8)
             }
 
@@ -584,7 +571,6 @@ struct BackupDetailView: View {
                     variant: .secondary,
                     action: {
                         saveError = nil
-                        showingSaveSuccess = false
                         loadConfig()
                         lockConfig()
                     }
@@ -725,9 +711,8 @@ struct BackupDetailView: View {
     }
 
     private func saveConfig() {
-        // Clear previous messages
+        // Clear previous errors
         saveError = nil
-        showingSaveSuccess = false
 
         // Validate
         guard !s3Bucket.isEmpty else {
@@ -764,33 +749,13 @@ struct BackupDetailView: View {
         )
         backupManager.saveConfig(config)
 
-        // Show success message
-        showingSaveSuccess = true
-
-        // Auto-close after 1.5 seconds
-        Task {
-            try? await Task.sleep(nanoseconds: 1_500_000_000)
-            await MainActor.run {
-                showingSaveSuccess = false
-                lockConfig()
-            }
-        }
+        // Show success toast and lock config
+        toastQueue.enqueue(message: "Configuration saved successfully")
+        lockConfig()
     }
 
     private func unlockConfig() {
-        Task {
-            do {
-                try await BiometricAuthManager.shared.authenticate(reason: "Authenticate to edit backup settings")
-                await MainActor.run {
-                    isConfigUnlocked = true
-                }
-            } catch {
-                // Authentication failed or cancelled - keep locked
-                await MainActor.run {
-                    isConfigUnlocked = false
-                }
-            }
-        }
+        isConfigUnlocked = true
     }
 
     private func lockConfig() {
@@ -799,10 +764,13 @@ struct BackupDetailView: View {
 
     private func savePassphrase() {
         do {
-            try FileEncryption.shared.savePassphrase(passphrase)
+            // Use authenticated context to prevent keychain password prompt
+            let context = authManager.getAuthenticatedContext()
+            try FileEncryption.shared.savePassphrase(passphrase, context: context)
             passphrase = ""
             confirmPassphrase = ""
             showingPassphrasePrompt = false
+            toastQueue.enqueue(message: "Encryption passphrase saved successfully")
         } catch {
             // Handle error (show alert)
         }

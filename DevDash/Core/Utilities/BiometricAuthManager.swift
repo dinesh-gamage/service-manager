@@ -95,8 +95,8 @@ class BiometricAuthManager: ObservableObject {
             return
         }
 
-        // Reset context to avoid reuse issues
-        context = LAContext()
+        // Reuse existing context if authenticated, don't recreate
+        // Creating a new context invalidates the previous one, breaking keychain access
         context.localizedCancelTitle = "Cancel"
 
         // Always use deviceOwnerAuthentication on macOS for better UX
@@ -118,19 +118,20 @@ class BiometricAuthManager: ObservableObject {
             let success = try await context.evaluatePolicy(policy, localizedReason: reason)
 
             if success {
+                // Authentication successful - context is now authenticated
+                // This context can be passed to keychain operations to avoid system prompts
                 isAuthenticated = true
                 sessionStartTime = Date()
+                isAuthenticating = false
             } else {
-                isAuthenticating = false  // Clear flag on failure
+                isAuthenticating = false
                 throw BiometricAuthError.authenticationFailed
             }
-
-            isAuthenticating = false  // Clear flag on success
         } catch let laError as LAError {
-            isAuthenticating = false  // Clear flag on error
+            isAuthenticating = false
             throw mapLAError(laError)
         } catch {
-            isAuthenticating = false  // Clear flag on error
+            isAuthenticating = false
             throw BiometricAuthError.unknown(error)
         }
     }
@@ -141,6 +142,15 @@ class BiometricAuthManager: ObservableObject {
             return
         }
         try await authenticate(reason: reason)
+    }
+
+    /// Get the authenticated context for use in keychain operations
+    /// Returns nil if not authenticated
+    func getAuthenticatedContext() -> LAContext? {
+        guard isAuthenticated else {
+            return nil
+        }
+        return context
     }
 
     /// Invalidate current session
@@ -159,22 +169,17 @@ class BiometricAuthManager: ObservableObject {
     // MARK: - Session Management
 
     private func setupSessionInvalidation() {
-        // Invalidate session when app goes to background
-        NotificationCenter.default.addObserver(
-            forName: NSApplication.willResignActiveNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            self?.invalidateSession()
-        }
-
-        // Invalidate session when app terminates
+        // Only invalidate session when app terminates
+        // Don't invalidate on app hide - file pickers and other dialogs hide the app temporarily
+        // but we want to maintain the authenticated session for keychain operations
         NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification,
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.invalidateSession()
+            Task { @MainActor in
+                self?.invalidateSession()
+            }
         }
     }
 

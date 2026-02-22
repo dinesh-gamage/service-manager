@@ -16,20 +16,6 @@ struct EditInstanceView: View {
     @State private var name: String
     @State private var instanceId: String
     @State private var sshConfig: SSHConfig?
-    @State private var showingAddTunnel = false
-    @State private var showingEditTunnel = false
-    @State private var tunnelToEdit: SSHTunnel?
-    @State private var tunnelToDelete: SSHTunnel?
-    @State private var showingDeleteTunnelConfirmation = false
-
-    // Computed property to get current instance from manager
-    private var currentInstance: EC2Instance? {
-        guard let groupIndex = manager.groups.firstIndex(where: { $0.id == group.id }),
-              let instanceIndex = manager.groups[groupIndex].instances.firstIndex(where: { $0.id == instance.id }) else {
-            return nil
-        }
-        return manager.groups[groupIndex].instances[instanceIndex]
-    }
 
     init(manager: InstanceGroupManager, group: InstanceGroup, instance: EC2Instance) {
         self.manager = manager
@@ -81,47 +67,6 @@ struct EditInstanceView: View {
                     )
                 }
 
-                Section("SSH Tunnels") {
-                    if currentInstance?.tunnels.isEmpty ?? true {
-                        Text("No tunnels configured")
-                            .foregroundColor(.secondary)
-                            .font(.caption)
-                    } else if let tunnels = currentInstance?.tunnels {
-                        List {
-                            ForEach(tunnels) { tunnel in
-                                HStack {
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text(tunnel.name)
-                                            .font(.body)
-
-                                        Text("127.0.0.1:\(tunnel.localPort) → \(tunnel.remoteHost):\(tunnel.remotePort)")
-                                            .font(.caption)
-                                            .foregroundColor(.secondary)
-                                    }
-
-                                    Spacer()
-
-                                    HStack(spacing: 6) {
-                                        VariantButton(icon: "pencil", variant: .secondary, tooltip: "Edit") {
-                                            tunnelToEdit = tunnel
-                                            showingEditTunnel = true
-                                        }
-
-                                        VariantButton(icon: "trash", variant: .danger, tooltip: "Delete") {
-                                            tunnelToDelete = tunnel
-                                            showingDeleteTunnelConfirmation = true
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    VariantButton("Add Tunnel", icon: "plus", variant: .primary) {
-                        showingAddTunnel = true
-                    }
-                }
-
                 Section {
                     Text("Editing instance in '\(group.name)' group.")
                         .font(.caption)
@@ -140,30 +85,7 @@ struct EditInstanceView: View {
                 }
             }
         }
-        .frame(minWidth: 600, minHeight: 550)
-        .sheet(isPresented: $showingAddTunnel) {
-            AddTunnelView(manager: manager, group: group, instance: instance)
-        }
-        .sheet(isPresented: $showingEditTunnel) {
-            if let tunnel = tunnelToEdit {
-                EditTunnelView(manager: manager, group: group, instance: instance, tunnel: tunnel)
-            }
-        }
-        .alert("Delete Tunnel", isPresented: $showingDeleteTunnelConfirmation) {
-            Button("Cancel", role: .cancel) {
-                tunnelToDelete = nil
-            }
-            Button("Delete", role: .destructive) {
-                if let tunnel = tunnelToDelete {
-                    deleteTunnel(tunnel)
-                    tunnelToDelete = nil
-                }
-            }
-        } message: {
-            if let tunnel = tunnelToDelete {
-                Text("Are you sure you want to delete the tunnel '\(tunnel.name)'?")
-            }
-        }
+        .frame(minWidth: 600, minHeight: 400)
     }
 
     private func saveInstance() {
@@ -174,25 +96,9 @@ struct EditInstanceView: View {
             lastKnownIP: instance.lastKnownIP,
             lastFetched: instance.lastFetched,
             fetchError: instance.fetchError,
-            sshConfig: sshConfig,
-            tunnels: currentInstance?.tunnels ?? []
+            sshConfig: sshConfig
         )
         manager.updateInstanceData(groupId: group.id, instanceId: instance.id, newInstance: updatedInstance)
         dismiss()
-    }
-
-    private func deleteTunnel(_ tunnel: SSHTunnel) {
-        guard let groupIndex = manager.groups.firstIndex(where: { $0.id == group.id }),
-              let instanceIndex = manager.groups[groupIndex].instances.firstIndex(where: { $0.id == instance.id }),
-              let tunnelIndex = manager.groups[groupIndex].instances[instanceIndex].tunnels.firstIndex(where: { $0.id == tunnel.id }) else {
-            return
-        }
-
-        // Stop tunnel if running
-        manager.stopTunnel(tunnelId: tunnel.id)
-
-        // Remove tunnel
-        manager.groups[groupIndex].instances[instanceIndex].tunnels.remove(at: tunnelIndex)
-        manager.saveGroups()
     }
 }

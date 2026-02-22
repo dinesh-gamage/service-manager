@@ -72,6 +72,14 @@ class EC2ManagerState: ObservableObject {
     @Published var healthCheckInstance: EC2Instance?
     @Published var healthCheckData: [String: Any]?
 
+    // Tunnel management
+    @Published var showingAddTunnel = false
+    @Published var showingEditTunnel = false
+    @Published var selectedGroupForTunnel: InstanceGroup?
+    @Published var tunnelToEdit: SSHTunnel?
+    @Published var tunnelToDelete: SSHTunnel?
+    @Published var showingDeleteTunnelConfirmation = false
+
     private var cancellables = Set<AnyCancellable>()
 
     private init() {

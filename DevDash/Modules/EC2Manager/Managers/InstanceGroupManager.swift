@@ -80,12 +80,15 @@ class InstanceGroupManager: ObservableObject {
         }
 
         let task = Task.detached(priority: .userInitiated) {
-            let command = "aws-vault exec \(group.awsProfile) -- aws ec2 describe-instances --instance-ids \(instance.instanceId) --region \(group.region) --query 'Reservations[0].Instances[0].PublicIpAddress' --output text"
+            // Get AWS environment with credentials from vault session
+            let environment = await ProcessEnvironment.shared.getEnvironment(withAWSProfile: group.awsProfile, region: group.region)
+
+            let command = "aws ec2 describe-instances --instance-ids \(instance.instanceId) --region \(group.region) --query 'Reservations[0].Instances[0].PublicIpAddress' --output text"
 
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/bin/zsh")
             process.arguments = ["-c", command]
-            process.environment = ProcessEnvironment.shared.getEnvironment()
+            process.environment = environment
 
             let outputPipe = Pipe()
             let errorPipe = Pipe()
@@ -181,16 +184,19 @@ class InstanceGroupManager: ObservableObject {
             let region = group.region
             let profile = group.awsProfile
 
+            // Get AWS environment with credentials from vault session
+            let environment = await ProcessEnvironment.shared.getEnvironment(withAWSProfile: profile, region: region)
+
             var fullLog = "[Restart initiated for \(instance.name)]\n\n"
 
             // Step 1: Stop instance
-            let stopCommand = "aws-vault exec \(profile) -- aws ec2 stop-instances --instance-ids \(instanceId) --region \(region)"
+            let stopCommand = "aws ec2 stop-instances --instance-ids \(instanceId) --region \(region)"
             fullLog += "[Command] \(stopCommand)\n"
 
             let stopProcess = Process()
             stopProcess.executableURL = URL(fileURLWithPath: "/bin/zsh")
             stopProcess.arguments = ["-c", stopCommand]
-            stopProcess.environment = ProcessEnvironment.shared.getEnvironment()
+            stopProcess.environment = environment
 
             let stopOutput = Pipe()
             let stopError = Pipe()
@@ -235,11 +241,11 @@ class InstanceGroupManager: ObservableObject {
                 fullLog += "[Waiting] For instance to stop...\n"
                 await MainActor.run { outputViewModel.setLogs(fullLog) }
 
-                let waitStopCommand = "aws-vault exec \(profile) -- aws ec2 wait instance-stopped --instance-ids \(instanceId) --region \(region)"
+                let waitStopCommand = "aws ec2 wait instance-stopped --instance-ids \(instanceId) --region \(region)"
                 let waitStopProcess = Process()
                 waitStopProcess.executableURL = URL(fileURLWithPath: "/bin/zsh")
                 waitStopProcess.arguments = ["-c", waitStopCommand]
-                waitStopProcess.environment = ProcessEnvironment.shared.getEnvironment()
+                waitStopProcess.environment = environment
 
                 try waitStopProcess.run()
                 waitStopProcess.waitUntilExit()
@@ -247,14 +253,14 @@ class InstanceGroupManager: ObservableObject {
                 fullLog += "[Stopped] Instance is now stopped\n\n"
 
                 // Step 3: Start instance
-                let startCommand = "aws-vault exec \(profile) -- aws ec2 start-instances --instance-ids \(instanceId) --region \(region)"
+                let startCommand = "aws ec2 start-instances --instance-ids \(instanceId) --region \(region)"
                 fullLog += "[Command] \(startCommand)\n"
                 await MainActor.run { outputViewModel.setLogs(fullLog) }
 
                 let startProcess = Process()
                 startProcess.executableURL = URL(fileURLWithPath: "/bin/zsh")
                 startProcess.arguments = ["-c", startCommand]
-                startProcess.environment = ProcessEnvironment.shared.getEnvironment()
+                startProcess.environment = environment
 
                 let startOutput = Pipe()
                 let startError = Pipe()
@@ -298,11 +304,11 @@ class InstanceGroupManager: ObservableObject {
                 fullLog += "[Waiting] For instance to be running...\n"
                 await MainActor.run { outputViewModel.setLogs(fullLog) }
 
-                let waitRunCommand = "aws-vault exec \(profile) -- aws ec2 wait instance-running --instance-ids \(instanceId) --region \(region)"
+                let waitRunCommand = "aws ec2 wait instance-running --instance-ids \(instanceId) --region \(region)"
                 let waitRunProcess = Process()
                 waitRunProcess.executableURL = URL(fileURLWithPath: "/bin/zsh")
                 waitRunProcess.arguments = ["-c", waitRunCommand]
-                waitRunProcess.environment = ProcessEnvironment.shared.getEnvironment()
+                waitRunProcess.environment = environment
 
                 try waitRunProcess.run()
                 waitRunProcess.waitUntilExit()
@@ -313,11 +319,11 @@ class InstanceGroupManager: ObservableObject {
                 fullLog += "[Fetching] New IP address...\n"
                 await MainActor.run { outputViewModel.setLogs(fullLog) }
 
-                let ipCommand = "aws-vault exec \(profile) -- aws ec2 describe-instances --instance-ids \(instanceId) --region \(region) --query 'Reservations[0].Instances[0].PublicIpAddress' --output text"
+                let ipCommand = "aws ec2 describe-instances --instance-ids \(instanceId) --region \(region) --query 'Reservations[0].Instances[0].PublicIpAddress' --output text"
                 let ipProcess = Process()
                 ipProcess.executableURL = URL(fileURLWithPath: "/bin/zsh")
                 ipProcess.arguments = ["-c", ipCommand]
-                ipProcess.environment = ProcessEnvironment.shared.getEnvironment()
+                ipProcess.environment = environment
 
                 let ipOutput = Pipe()
                 ipProcess.standardOutput = ipOutput
@@ -365,12 +371,15 @@ class InstanceGroupManager: ObservableObject {
         }
 
         let task = Task.detached(priority: .userInitiated) {
-            let command = "aws-vault exec \(group.awsProfile) -- aws ec2 describe-instance-status --instance-ids \(instance.instanceId) --region \(group.region) --include-all-instances"
+            // Get AWS environment with credentials from vault session
+            let environment = await ProcessEnvironment.shared.getEnvironment(withAWSProfile: group.awsProfile, region: group.region)
+
+            let command = "aws ec2 describe-instance-status --instance-ids \(instance.instanceId) --region \(group.region) --include-all-instances"
 
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/bin/zsh")
             process.arguments = ["-c", command]
-            process.environment = ProcessEnvironment.shared.getEnvironment()
+            process.environment = environment
 
             let outputPipe = Pipe()
             let errorPipe = Pipe()
@@ -497,6 +506,41 @@ class InstanceGroupManager: ObservableObject {
         }
     }
 
+    // MARK: - Tunnel CRUD
+
+    func addTunnel(groupId: UUID, tunnel: SSHTunnel) {
+        if let index = groups.firstIndex(where: { $0.id == groupId }) {
+            groups[index].tunnels.append(tunnel)
+            saveGroups()
+            toastQueue?.enqueue(message: "Tunnel '\(tunnel.name)' added")
+        }
+    }
+
+    func updateTunnel(groupId: UUID, tunnelId: UUID, newTunnel: SSHTunnel) {
+        if let groupIndex = groups.firstIndex(where: { $0.id == groupId }),
+           let tunnelIndex = groups[groupIndex].tunnels.firstIndex(where: { $0.id == tunnelId }) {
+            // Stop tunnel if it's running
+            if let runtime = tunnelRuntimes[tunnelId], runtime.isConnected {
+                runtime.stop()
+            }
+            groups[groupIndex].tunnels[tunnelIndex] = newTunnel
+            saveGroups()
+            toastQueue?.enqueue(message: "Tunnel '\(newTunnel.name)' updated")
+        }
+    }
+
+    func deleteTunnel(groupId: UUID, tunnelId: UUID) {
+        if let groupIndex = groups.firstIndex(where: { $0.id == groupId }),
+           let tunnelIndex = groups[groupIndex].tunnels.firstIndex(where: { $0.id == tunnelId }) {
+            let tunnelName = groups[groupIndex].tunnels[tunnelIndex].name
+            // Stop tunnel if it's running
+            stopTunnel(tunnelId: tunnelId)
+            groups[groupIndex].tunnels.remove(at: tunnelIndex)
+            saveGroups()
+            toastQueue?.enqueue(message: "Tunnel '\(tunnelName)' deleted")
+        }
+    }
+
     // MARK: - Import/Export
 
     func exportGroups() {
@@ -597,17 +641,23 @@ class InstanceGroupManager: ObservableObject {
         return instance.sshConfig ?? group.sshConfig
     }
 
-    /// Start an SSH tunnel for an instance
-    func startTunnel(instance: EC2Instance, tunnel: SSHTunnel, group: InstanceGroup) {
+    /// Start an SSH tunnel for a group
+    func startTunnel(tunnel: SSHTunnel, group: InstanceGroup) {
+        // Resolve bastion instance
+        guard let bastionInstance = group.instances.first(where: { $0.id == tunnel.bastionInstanceId }) else {
+            alertQueue?.enqueue(title: "Bastion Not Found", message: "The bastion instance for this tunnel no longer exists in the group.")
+            return
+        }
+
         // Validate bastion IP exists
-        guard let bastionIP = instance.lastKnownIP else {
-            alertQueue?.enqueue(title: "No IP Available", message: "Fetch the instance IP first before starting a tunnel.")
+        guard let bastionIP = bastionInstance.lastKnownIP else {
+            alertQueue?.enqueue(title: "No IP Available", message: "Fetch the bastion instance IP first before starting the tunnel.")
             return
         }
 
         // Resolve SSH config
-        guard let sshConfig = resolveSSHConfig(instance: instance, group: group) else {
-            alertQueue?.enqueue(title: "SSH Not Configured", message: "Configure SSH settings in the group or instance first.")
+        guard let sshConfig = resolveSSHConfig(instance: bastionInstance, group: group) else {
+            alertQueue?.enqueue(title: "SSH Not Configured", message: "Configure SSH settings in the group or bastion instance first.")
             return
         }
 
@@ -653,15 +703,13 @@ class InstanceGroupManager: ObservableObject {
         toastQueue?.enqueue(message: "Tunnel '\(runtime.tunnel.name)' stopped")
     }
 
-    /// Stop all tunnels for an instance
-    func stopAllTunnelsForInstance(instanceId: UUID) {
-        // Find all tunnels for this instance
-        for group in groups {
-            if let instance = group.instances.first(where: { $0.id == instanceId }) {
-                for tunnel in instance.tunnels {
-                    if let runtime = tunnelRuntimes[tunnel.id], runtime.isConnected {
-                        runtime.stop()
-                    }
+    /// Stop all tunnels for a group
+    func stopAllTunnelsForGroup(groupId: UUID) {
+        // Find all tunnels for this group
+        if let group = groups.first(where: { $0.id == groupId }) {
+            for tunnel in group.tunnels {
+                if let runtime = tunnelRuntimes[tunnel.id], runtime.isConnected {
+                    runtime.stop()
                 }
             }
         }

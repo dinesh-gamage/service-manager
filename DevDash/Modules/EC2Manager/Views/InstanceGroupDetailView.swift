@@ -174,7 +174,7 @@ struct InstanceGroupDetailView: View {
                         // SSH button (only if IP exists and SSH is configured)
                         if instance.lastKnownIP != nil &&
                            manager.resolveSSHConfig(instance: instance, group: group) != nil {
-                            VariantButton(icon: "command", variant: .primary, tooltip: "Open SSH Terminal") {
+                            VariantButton(icon: "terminal.fill", variant: .primary, tooltip: "Open SSH Terminal") {
                                 manager.openSSHTerminal(instance: instance, group: group)
                             }
                         }
@@ -202,41 +202,73 @@ struct InstanceGroupDetailView: View {
                     .padding()
 
                     // Tunnels Section
-                    if group.instances.contains(where: { !$0.tunnels.isEmpty }) {
+                    if !group.tunnels.isEmpty {
                         Divider()
                             .padding(.horizontal)
 
                         VStack(alignment: .leading, spacing: 16) {
-                            Text("SSH Tunnels")
-                                .font(.headline)
+                            HStack {
+                                Text("SSH Tunnels")
+                                    .font(.headline)
+
+                                Spacer()
+
+                                VariantButton("Add Tunnel", icon: "plus", variant: .primary) {
+                                    state.selectedGroupForTunnel = group
+                                    state.showingAddTunnel = true
+                                }
+                            }
+                            .padding(.horizontal)
+
+                            ForEach(group.tunnels) { tunnel in
+                                TunnelRow(
+                                    tunnel: tunnel,
+                                    group: group,
+                                    manager: manager
+                                )
                                 .padding(.horizontal)
-
-                            ForEach(group.instances.filter { !$0.tunnels.isEmpty }) { instance in
-                                VStack(alignment: .leading, spacing: 8) {
-                                    // Instance header
-                                    HStack {
-                                        Image(systemName: "server.rack")
-                                            .foregroundColor(.secondary)
-                                        Text(instance.name)
-                                            .font(.subheadline)
-                                            .fontWeight(.medium)
-                                        Spacer()
+                                .contextMenu {
+                                    Button(action: {
+                                        state.selectedGroupForTunnel = group
+                                        state.tunnelToEdit = tunnel
+                                        state.showingEditTunnel = true
+                                    }) {
+                                        Label("Edit", systemImage: "pencil")
                                     }
-                                    .padding(.horizontal)
 
-                                    // Tunnels for this instance
-                                    ForEach(instance.tunnels) { tunnel in
-                                        TunnelRow(
-                                            tunnel: tunnel,
-                                            instance: instance,
-                                            group: group,
-                                            manager: manager
-                                        )
-                                        .padding(.horizontal)
+                                    Button(role: .destructive, action: {
+                                        state.selectedGroupForTunnel = group
+                                        state.tunnelToDelete = tunnel
+                                        state.showingDeleteTunnelConfirmation = true
+                                    }) {
+                                        Label("Delete", systemImage: "trash")
                                     }
                                 }
-                                .padding(.vertical, 8)
                             }
+                        }
+                        .padding(.vertical)
+                    } else {
+                        Divider()
+                            .padding(.horizontal)
+
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack {
+                                Text("SSH Tunnels")
+                                    .font(.headline)
+
+                                Spacer()
+
+                                VariantButton("Add Tunnel", icon: "plus", variant: .primary) {
+                                    state.selectedGroupForTunnel = group
+                                    state.showingAddTunnel = true
+                                }
+                            }
+                            .padding(.horizontal)
+
+                            Text("No tunnels configured")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .padding(.horizontal)
                         }
                         .padding(.vertical)
                     }
@@ -296,6 +328,35 @@ struct InstanceGroupDetailView: View {
         .sheet(isPresented: $state.showingHealthCheckResults) {
             if let instance = state.healthCheckInstance {
                 HealthCheckResultsView(instance: instance, healthData: state.healthCheckData)
+            }
+        }
+        .sheet(isPresented: $state.showingAddTunnel) {
+            if let selectedGroup = state.selectedGroupForTunnel {
+                AddTunnelView(manager: manager, group: selectedGroup)
+            }
+        }
+        .sheet(isPresented: $state.showingEditTunnel) {
+            if let selectedGroup = state.selectedGroupForTunnel,
+               let tunnel = state.tunnelToEdit {
+                EditTunnelView(manager: manager, group: selectedGroup, tunnel: tunnel)
+            }
+        }
+        .alert("Delete Tunnel", isPresented: $state.showingDeleteTunnelConfirmation) {
+            Button("Cancel", role: .cancel) {
+                state.tunnelToDelete = nil
+                state.selectedGroupForTunnel = nil
+            }
+            Button("Delete", role: .destructive) {
+                if let selectedGroup = state.selectedGroupForTunnel,
+                   let tunnel = state.tunnelToDelete {
+                    manager.deleteTunnel(groupId: selectedGroup.id, tunnelId: tunnel.id)
+                    state.tunnelToDelete = nil
+                    state.selectedGroupForTunnel = nil
+                }
+            }
+        } message: {
+            if let tunnel = state.tunnelToDelete {
+                Text("Are you sure you want to delete the tunnel '\(tunnel.name)'?")
             }
         }
         } else {

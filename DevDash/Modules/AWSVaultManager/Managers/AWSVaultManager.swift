@@ -10,6 +10,19 @@ import Combine
 import AppKit
 import UniformTypeIdentifiers
 
+// MARK: - Import/Export Models
+
+struct ExportAWSVaultProfile: Codable {
+    let id: String
+    let name: String
+    let region: String?
+    let description: String?
+    let accessKeyId: String?
+    let secretAccessKey: String?
+    let createdAt: Double
+    let lastModified: Double
+}
+
 @MainActor
 class AWSVaultManager: ObservableObject {
     @Published private(set) var profiles: [AWSVaultProfile] = []
@@ -598,49 +611,37 @@ class AWSVaultManager: ObservableObject {
                 // Require biometric auth before export
                 try await BiometricAuthManager.shared.authenticate(reason: "Authenticate to export AWS Vault profiles")
 
-                let panel = NSSavePanel()
-                panel.title = "Export AWS Vault Profiles"
-                panel.nameFieldStringValue = "aws-vault-profiles-\(Date().timeIntervalSince1970).json"
-                panel.allowedContentTypes = [.json]
+                // Build export data with credentials from keychain
+                let exportData: [ExportAWSVaultProfile] = self.profiles.map { profile in
+                    // Try to retrieve credentials from keychain
+                    let creds = try? self.retrieveCredentialsFromKeychain(profileName: profile.name)
 
-                panel.begin { response in
-                    guard response == .OK, let url = panel.url else { return }
+                    return ExportAWSVaultProfile(
+                        id: profile.id.uuidString,
+                        name: profile.name,
+                        region: profile.region,
+                        description: profile.description,
+                        accessKeyId: creds?.accessKeyId,
+                        secretAccessKey: creds?.secretAccessKey,
+                        createdAt: profile.createdAt.timeIntervalSince1970,
+                        lastModified: profile.lastModified.timeIntervalSince1970
+                    )
+                }
 
-                    Task {
-                        do {
-                            var exportData: [[String: Any]] = []
-
-                            for profile in self.profiles {
-                                var profileData: [String: Any] = [
-                                    "id": profile.id.uuidString,
-                                    "name": profile.name,
-                                    "createdAt": profile.createdAt.timeIntervalSince1970,
-                                    "lastModified": profile.lastModified.timeIntervalSince1970
-                                ]
-
-                                if let region = profile.region { profileData["region"] = region }
-                                if let desc = profile.description { profileData["description"] = desc }
-
-                                // Try to retrieve credentials from keychain
-                                if let creds = try? self.retrieveCredentialsFromKeychain(profileName: profile.name) {
-                                    profileData["accessKeyId"] = creds.accessKeyId
-                                    profileData["secretAccessKey"] = creds.secretAccessKey
-                                }
-
-                                exportData.append(profileData)
-                            }
-
-                            let jsonData = try JSONSerialization.data(withJSONObject: exportData, options: [.prettyPrinted])
-                            try jsonData.write(to: url)
-
-                            await MainActor.run {
-                                self.toastQueue?.enqueue(message: "Exported \(self.profiles.count) profile\(self.profiles.count == 1 ? "" : "s") with credentials")
-                            }
-                        } catch {
-                            await MainActor.run {
-                                self.alertQueue?.enqueue(title: "Export Failed", message: error.localizedDescription)
-                            }
+                // Use ImportExportManager for consistent file dialogs and JSON handling
+                ImportExportManager.shared.exportJSON(
+                    exportData,
+                    defaultFileName: "aws-vault-profiles-\(Date().timeIntervalSince1970).json",
+                    title: "Export AWS Vault Profiles"
+                ) { [weak self] result in
+                    switch result {
+                    case .success:
+                        self?.toastQueue?.enqueue(message: "Exported \(exportData.count) profile\(exportData.count == 1 ? "" : "s") with credentials")
+                    case .failure(let error):
+                        if case .userCancelled = error {
+                            return
                         }
+                        self?.alertQueue?.enqueue(title: "Export Failed", message: error.localizedDescription)
                     }
                 }
             } catch {
@@ -652,37 +653,29 @@ class AWSVaultManager: ObservableObject {
     }
 
     func importProfiles() {
-        let panel = NSOpenPanel()
-        panel.title = "Import AWS Vault Profiles"
-        panel.allowedContentTypes = [.json]
-        panel.allowsMultipleSelection = false
+        isLoading = true
 
-        panel.begin { response in
-            guard response == .OK, let url = panel.url else { return }
+        ImportExportManager.shared.importJSON(
+            ExportAWSVaultProfile.self,
+            title: "Import AWS Vault Profiles"
+        ) { [weak self] result in
+            guard let self = self else { return }
 
             Task {
-                await MainActor.run { self.isLoading = true }
-
-                do {
-                    let data = try Data(contentsOf: url)
-                    let jsonArray = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] ?? []
-
+                switch result {
+                case .success(let importedProfiles):
                     var newCount = 0
                     var updatedCount = 0
 
-                    for item in jsonArray {
-                        guard let name = item["name"] as? String else {
-                            continue
-                        }
-
-                        let trimmedName = name.trimmingCharacters(in: .whitespaces)
-                        let accessKeyId = item["accessKeyId"] as? String
-                        let secretAccessKey = item["secretAccessKey"] as? String
+                    for item in importedProfiles {
+                        let trimmedName = item.name.trimmingCharacters(in: .whitespaces)
+                        let accessKeyId = item.accessKeyId
+                        let secretAccessKey = item.secretAccessKey
 
                         var profile = AWSVaultProfile(
-                            name: name,
-                            region: item["region"] as? String,
-                            description: item["description"] as? String
+                            name: item.name,
+                            region: item.region,
+                            description: item.description
                         )
 
                         // If credentials provided, add to aws-vault
@@ -693,7 +686,7 @@ class AWSVaultManager: ObservableObject {
                             } catch {
                                 // Skip this profile if aws-vault add fails
                                 await MainActor.run {
-                                    self.alertQueue?.enqueue(title: "Import Error", message: "Failed to add '\(name)': \(error.localizedDescription)")
+                                    self.alertQueue?.enqueue(title: "Import Error", message: "Failed to add '\(item.name)': \(error.localizedDescription)")
                                 }
                                 continue
                             }
@@ -732,9 +725,15 @@ class AWSVaultManager: ObservableObject {
                         }
                         self.toastQueue?.enqueue(message: message)
                     }
-                } catch {
+
+                case .failure(let error):
                     await MainActor.run {
                         self.isLoading = false
+
+                        // Only show error alerts, not cancellation
+                        if case .userCancelled = error {
+                            return
+                        }
                         self.alertQueue?.enqueue(title: "Import Failed", message: error.localizedDescription)
                     }
                 }

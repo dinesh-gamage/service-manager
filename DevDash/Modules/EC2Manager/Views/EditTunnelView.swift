@@ -11,23 +11,21 @@ struct EditTunnelView: View {
     @Environment(\.dismiss) var dismiss
     @ObservedObject var manager: InstanceGroupManager
     let group: InstanceGroup
-    let instance: EC2Instance
     let tunnel: SSHTunnel
 
     @State private var editedTunnel: SSHTunnel
     @State private var isValid = true
 
-    init(manager: InstanceGroupManager, group: InstanceGroup, instance: EC2Instance, tunnel: SSHTunnel) {
+    init(manager: InstanceGroupManager, group: InstanceGroup, tunnel: SSHTunnel) {
         self.manager = manager
         self.group = group
-        self.instance = instance
         self.tunnel = tunnel
         _editedTunnel = State(initialValue: tunnel)
     }
 
     var body: some View {
         NavigationStack {
-            TunnelForm(tunnel: $editedTunnel, isValid: $isValid)
+            TunnelForm(tunnel: $editedTunnel, isValid: $isValid, instances: group.instances)
                 .navigationTitle("Edit Tunnel")
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
@@ -39,21 +37,11 @@ struct EditTunnelView: View {
                     }
                 }
         }
-        .frame(minWidth: 500, minHeight: 400)
+        .frame(minWidth: 500, minHeight: 450)
     }
 
     private func saveTunnel() {
-        // Find group and instance indices
-        guard let groupIndex = manager.groups.firstIndex(where: { $0.id == group.id }),
-              let instanceIndex = manager.groups[groupIndex].instances.firstIndex(where: { $0.id == instance.id }),
-              let tunnelIndex = manager.groups[groupIndex].instances[instanceIndex].tunnels.firstIndex(where: { $0.id == tunnel.id }) else {
-            return
-        }
-
-        // Update tunnel
-        manager.groups[groupIndex].instances[instanceIndex].tunnels[tunnelIndex] = editedTunnel
-        manager.saveGroups()
-
+        manager.updateTunnel(groupId: group.id, tunnelId: tunnel.id, newTunnel: editedTunnel)
         dismiss()
     }
 }

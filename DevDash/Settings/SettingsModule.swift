@@ -41,6 +41,7 @@ struct SettingsModule: DevDashModule {
 class SettingsState: ObservableObject {
     static let shared = SettingsState()
 
+    let toastQueue = ToastQueue()
     @Published var selectedCategory: String? = "About"
 
     private init() {}
@@ -50,6 +51,7 @@ class SettingsState: ObservableObject {
 
 struct SettingsSidebarView: View {
     @ObservedObject var state = SettingsState.shared
+    @ObservedObject private var accentColor = AppTheme.AccentColor.shared
 
     // Define setting categories as simple items
     let categories: [SettingCategory] = [
@@ -73,7 +75,7 @@ struct SettingsSidebarView: View {
             List {
                 ForEach(categories) { category in
                     ModuleSidebarListItem(
-                        icon: .image(systemName: category.icon, color: .blue),
+                        icon: .image(systemName: category.icon, color: accentColor.current),
                         title: category.name,
                         subtitle: nil,
                         badge: nil,

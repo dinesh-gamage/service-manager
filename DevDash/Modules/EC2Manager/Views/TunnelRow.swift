@@ -9,11 +9,14 @@ import SwiftUI
 
 struct TunnelRow: View {
     let tunnel: SSHTunnel
-    let instance: EC2Instance
     let group: InstanceGroup
     @ObservedObject var manager: InstanceGroupManager
 
     @State private var showingLogs = false
+
+    var bastionInstance: EC2Instance? {
+        group.instances.first(where: { $0.id == tunnel.bastionInstanceId })
+    }
 
     var runtime: TunnelRuntime? {
         manager.getTunnelRuntime(tunnelId: tunnel.id)
@@ -21,6 +24,17 @@ struct TunnelRow: View {
 
     var isConnected: Bool {
         runtime?.isConnected ?? false
+    }
+
+    var bastionHasIP: Bool {
+        bastionInstance?.lastKnownIP != nil
+    }
+
+    var isFetchingIP: Bool {
+        if let instance = bastionInstance {
+            return manager.isFetching[instance.id] == true
+        }
+        return false
     }
 
     var body: some View {
@@ -51,6 +65,27 @@ struct TunnelRow: View {
                         .foregroundColor(.secondary)
                         .font(.system(.caption, design: .monospaced))
                 }
+
+                // Bastion instance indicator
+                if let bastion = bastionInstance {
+                    HStack(spacing: 4) {
+                        Image(systemName: "server.rack")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        Text("via \(bastion.name)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                } else {
+                    HStack(spacing: 4) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.caption2)
+                            .foregroundColor(.orange)
+                        Text("Bastion instance not found")
+                            .font(.caption)
+                            .foregroundColor(.orange)
+                    }
+                }
             }
 
             Spacer()
@@ -67,14 +102,27 @@ struct TunnelRow: View {
                     }
                 }
 
-                // Start/Stop button
+                // Conditional buttons based on state
                 if isConnected {
+                    // Only show Stop when connected
                     VariantButton("Stop", icon: "stop.fill", variant: .danger) {
                         manager.stopTunnel(tunnelId: tunnel.id)
                     }
-                } else {
-                    VariantButton("Start", icon: "play.fill", variant: .primary) {
-                        manager.startTunnel(instance: instance, tunnel: tunnel, group: group)
+                } else if let bastion = bastionInstance {
+                    // Show Fetch IP button if no IP or both Fetch and Start if IP exists
+                    if isFetchingIP {
+                        ProgressView()
+                            .scaleEffect(0.7)
+                    } else {
+                        VariantButton(icon: "arrow.down.circle", variant: .primary, tooltip: "Fetch IP") {
+                            manager.fetchInstanceIP(group: group, instance: bastion)
+                        }
+
+                        if bastionHasIP {
+                            VariantButton("Start", icon: "play.fill", variant: .primary) {
+                                manager.startTunnel(tunnel: tunnel, group: group)
+                            }
+                        }
                     }
                 }
             }

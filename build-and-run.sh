@@ -12,7 +12,7 @@ if pgrep -x "DevDash" > /dev/null; then
 fi
 
 echo "🧹 Cleaning and building DevDash..."
-xcodebuild -project DevDash.xcodeproj -scheme ServiceManager -configuration Debug clean build
+xcodebuild -project DevDash.xcodeproj -scheme DevDash -configuration Debug clean build
 
 echo "🚀 Launching DevDash..."
 open ~/Library/Developer/Xcode/DerivedData/DevDash-*/Build/Products/Debug/DevDash.app
